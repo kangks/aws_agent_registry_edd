@@ -15,6 +15,13 @@
             "evaluatorArn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:evaluator/eddpoc_multiplier_domain_accuracy-DCjD5FFsrw"
           }
         },
+        "onlineEvalConfigs": {
+          "domain_accuracy_online": {
+            "onlineEvaluationConfigId": "eddpoc_domain_accuracy_online-sKHw5UE3e4",
+            "onlineEvaluationConfigArn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:online-evaluation-config/eddpoc_domain_accuracy_online-sKHw5UE3e4",
+            "agent": "multiplier_hr_agent"
+          }
+        },
         "stackName": "AgentCore-eddpoc-default"
       }
     }

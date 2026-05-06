@@ -15,9 +15,7 @@
       "codeLocation": "agents/",
       "runtimeVersion": "PYTHON_3_11",
       "networkMode": "PUBLIC",
-      "protocol": "HTTP",
-      "idleTimeout": 900,
-      "maxLifetime": 3600
+      "protocol": "HTTP"
     }
   ],
   "memories": [],
@@ -63,7 +61,17 @@
       }
     }
   ],
-  "onlineEvalConfigs": [],
+  "onlineEvalConfigs": [
+    {
+      "name": "domain_accuracy_online",
+      "agent": "multiplier_hr_agent",
+      "evaluators": [
+        "multiplier_domain_accuracy"
+      ],
+      "samplingRate": 100,
+      "enableOnCreate": true
+    }
+  ],
   "agentCoreGateways": [],
   "policyEngines": [],
   "configBundles": [],
