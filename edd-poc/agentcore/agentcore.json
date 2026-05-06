@@ -1,5 +1,4 @@
 {
-  "$schema": "https://schema.agentcore.aws.dev/v1/agentcore.json",
   "name": "eddpoc",
   "version": 1,
   "managedBy": "CDK",
@@ -9,13 +8,46 @@
   },
   "runtimes": [
     {
-      "name": "multiplier_hr_agent",
+      "name": "multiplier_hr_sonnet",
       "build": "CodeZip",
       "entrypoint": "main.py",
       "codeLocation": "agents/",
       "runtimeVersion": "PYTHON_3_11",
       "networkMode": "PUBLIC",
-      "protocol": "HTTP"
+      "protocol": "HTTP",
+      "idleTimeout": 900,
+      "maxLifetime": 3600,
+      "environmentVariables": {
+        "AGENT_MODEL_KEY": "sonnet"
+      }
+    },
+    {
+      "name": "multiplier_hr_haiku",
+      "build": "CodeZip",
+      "entrypoint": "main.py",
+      "codeLocation": "agents/",
+      "runtimeVersion": "PYTHON_3_11",
+      "networkMode": "PUBLIC",
+      "protocol": "HTTP",
+      "idleTimeout": 900,
+      "maxLifetime": 3600,
+      "environmentVariables": {
+        "AGENT_MODEL_KEY": "haiku"
+      }
+    },
+    {
+      "name": "multiplier_hr_nova_pro",
+      "build": "CodeZip",
+      "entrypoint": "main.py",
+      "codeLocation": "agents/",
+      "runtimeVersion": "PYTHON_3_11",
+      "networkMode": "PUBLIC",
+      "protocol": "HTTP",
+      "idleTimeout": 900,
+      "maxLifetime": 3600,
+      "environmentVariables": {
+        "AGENT_MODEL_KEY": "nova_pro"
+      }
     }
   ],
   "memories": [],
@@ -63,8 +95,26 @@
   ],
   "onlineEvalConfigs": [
     {
-      "name": "domain_accuracy_online",
-      "agent": "multiplier_hr_agent",
+      "name": "eval_sonnet",
+      "agent": "multiplier_hr_sonnet",
+      "evaluators": [
+        "multiplier_domain_accuracy"
+      ],
+      "samplingRate": 100,
+      "enableOnCreate": true
+    },
+    {
+      "name": "eval_haiku",
+      "agent": "multiplier_hr_haiku",
+      "evaluators": [
+        "multiplier_domain_accuracy"
+      ],
+      "samplingRate": 100,
+      "enableOnCreate": true
+    },
+    {
+      "name": "eval_nova_pro",
+      "agent": "multiplier_hr_nova_pro",
       "evaluators": [
         "multiplier_domain_accuracy"
       ],
