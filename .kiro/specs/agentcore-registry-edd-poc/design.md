@@ -478,6 +478,78 @@ Turn 2: User: "What about leave entitlements?"
 }
 ```
 
+## Multi-Runtime Deployment Architecture (AgentCore CloudWatch Comparison)
+
+### Overview
+
+The project deploys 3 separate AgentCore runtimes — one per model — to enable side-by-side comparison via CloudWatch GenAI Observability. Each runtime uses the same agent code (`agents/main.py`) but is configured with a different `AGENT_MODEL_KEY` environment variable.
+
+### Runtime Configuration
+
+Each runtime in `agentcore/agentcore.json` shares:
+- **Build:** `CodeZip` (agents/ directory zipped and deployed)
+- **Entry point:** `main.py` (uses `BedrockAgentCoreApp` wrapper)
+- **Python version:** 3.11
+- **Network:** PUBLIC
+- **Protocol:** HTTP
+- **Idle timeout:** 900s / Max lifetime: 3600s
+
+The only difference is the `AGENT_MODEL_KEY` environment variable:
+
+| Runtime Name | Model Key | Bedrock Model ID |
+|-------------|-----------|-----------------|
+| `multiplier_hr_sonnet` | `sonnet` | `us.anthropic.claude-sonnet-4-6` |
+| `multiplier_hr_haiku` | `haiku` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `multiplier_hr_nova_pro` | `nova_pro` | `us.amazon.nova-pro-v1:0` |
+
+### Online Evaluation Configuration
+
+Each runtime has a corresponding `onlineEvalConfig` that automatically scores every trace:
+
+```json
+{
+  "onlineEvalConfigs": [
+    {"name": "eval_sonnet", "agent": "multiplier_hr_sonnet", "evaluators": ["multiplier_domain_accuracy"], "samplingRate": 100, "enableOnCreate": true},
+    {"name": "eval_haiku", "agent": "multiplier_hr_haiku", "evaluators": ["multiplier_domain_accuracy"], "samplingRate": 100, "enableOnCreate": true},
+    {"name": "eval_nova_pro", "agent": "multiplier_hr_nova_pro", "evaluators": ["multiplier_domain_accuracy"], "samplingRate": 100, "enableOnCreate": true}
+  ]
+}
+```
+
+- **Sampling rate:** 100% (every invocation is evaluated)
+- **Evaluator:** `multiplier_domain_accuracy` — LLM-as-a-Judge using Claude Sonnet 4.5
+- **Enable on create:** Evaluation starts automatically when the runtime is deployed
+
+### CloudWatch GenAI Observability Integration
+
+The comparison workflow leverages CloudWatch GenAI Observability:
+
+1. **Trace emission:** Each runtime emits OTEL spans with `strands.telemetry.tracer` scope via the AgentCore ADOT sidecar
+2. **Session tracking:** Each invocation creates a unique session ID for trace correlation
+3. **On-demand evaluation:** `agentcore run eval --runtime <name> --evaluator <name> --session-id <id>` scores specific sessions
+4. **Score aggregation:** Scores appear in CloudWatch GenAI Observability dashboard for cross-model comparison
+5. **Filtering:** Dashboard allows filtering by runtime name to compare model performance side-by-side
+
+### `agentcore/agentcore.json` Structure
+
+The project configuration contains:
+- **3 runtimes** — one per model, identical code with different env vars
+- **1 evaluator** — `multiplier_domain_accuracy` (shared LLM-as-a-Judge)
+- **3 onlineEvalConfigs** — one per runtime, linking each to the shared evaluator
+- **No memories, credentials, gateways, or A/B tests** — minimal configuration for comparison
+
+### Model Comparison Workflow
+
+```
+1. Deploy: agentcore deploy (creates all 3 runtimes + evaluator + online configs)
+2. Invoke: agentcore invoke --runtime <name> "<prompt>" (generates traces)
+3. Wait: ~3-5 minutes for trace indexing
+4. Evaluate: agentcore run eval --runtime <name> --evaluator <name> --session-id <id>
+5. Compare: View scores in CloudWatch GenAI Observability or aggregate locally
+```
+
+---
+
 ## Error Handling
 
 | Condition | Handling |

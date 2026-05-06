@@ -158,6 +158,25 @@ Minimum viable POC demonstrating AgentCore custom evaluators and observability f
     - Verify parallel tool calls render as parallel branches
     - _Requirements: 11.1, 11.3, 11.4_
 
+- [x] 13. Deploy multi-model AgentCore runtimes for CloudWatch comparison
+  - [x] 13.1 Create agentcore project with 3 model-specific runtimes
+    - Configure `agentcore/agentcore.json` with 3 runtimes: `multiplier_hr_sonnet`, `multiplier_hr_haiku`, `multiplier_hr_nova_pro`
+    - Each runtime uses same code (`agents/main.py`) with different `AGENT_MODEL_KEY` env var
+    - Deploy with `agentcore deploy` to create all runtimes in us-east-1
+  - [x] 13.2 Add online evaluation configs for automatic scoring
+    - Define `multiplier_domain_accuracy` evaluator (LLM-as-a-Judge with Claude Sonnet 4.5)
+    - Create 3 `onlineEvalConfigs` linking each runtime to the evaluator at 100% sampling
+    - Verify evaluator scores traces with 1-5 numerical scale
+  - [x] 13.3 Run end-to-end comparison across all 3 models
+    - Invoke 5 HR prompts against each runtime (15 total invocations)
+    - Run on-demand evaluation per session: `agentcore run eval --runtime <name> --evaluator multiplier_domain_accuracy --session-id <id>`
+    - Generate `results/agentcore_comparison.md` with summary table, per-session scores, and observations
+    - Results: Sonnet avg 4.0, Haiku avg 4.2, Nova Pro avg 4.0
+  - [x] 13.4 Verify evaluation scores appear in CloudWatch GenAI Observability
+    - Confirmed traces emit with `strands.telemetry.tracer` scope
+    - Confirmed on-demand eval returns scores per session with explanations
+    - All 15 sessions evaluated successfully with the `multiplier_domain_accuracy` evaluator
+
 ## Notes
 
 - 3 models (not 5) — enough to show the comparison pattern without burning time/tokens on Opus and Nova Lite
