@@ -550,6 +550,53 @@ The project configuration contains:
 
 ---
 
+### BYO Agent Observability (Non-Runtime Path)
+
+The BYO (Bring Your Own) path allows agents running outside AgentCore Runtime to export traces to CloudWatch/X-Ray using AWS Distro for OpenTelemetry (ADOT). This enables the same observability dashboards without requiring managed runtime deployment.
+
+#### Setup
+
+1. Install `aws-opentelemetry-distro` package
+2. Create a minimal runner script (`agents/byo_runner.py`) that imports `create_agent` and invokes it — no manual OTEL configuration needed
+3. Run with `opentelemetry-instrument` wrapper and ADOT env vars
+
+#### Required Environment Variables
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `AGENT_OBSERVABILITY_ENABLED` | `true` | Enable ADOT agent observability |
+| `OTEL_PYTHON_DISTRO` | `aws_distro` | Use AWS OTEL distribution |
+| `OTEL_PYTHON_CONFIGURATOR` | `aws_configurator` | Use AWS OTEL configurator |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | Export protocol for traces |
+| `OTEL_RESOURCE_ATTRIBUTES` | `service.name=<agent-name>` | Service identity in CloudWatch |
+
+#### How BYO Traces Appear in CloudWatch
+
+- Traces export to X-Ray with the configured `service.name` as `aws.local.service`
+- Each trace includes full span tree: `invoke_agent` → `chat` → `execute_tool` → model calls
+- Traces are visible in X-Ray console and CloudWatch Transaction Search
+- Service names appear as separate entities (e.g., `multiplier-byo-sonnet`, `multiplier-byo-haiku`)
+
+#### Invocation Pattern
+
+```bash
+AGENT_OBSERVABILITY_ENABLED=true \
+OTEL_PYTHON_DISTRO=aws_distro \
+OTEL_PYTHON_CONFIGURATOR=aws_configurator \
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+OTEL_RESOURCE_ATTRIBUTES="service.name=multiplier-byo-{model_key}" \
+AWS_PROFILE=ml-sandbox AWS_REGION=us-east-1 \
+opentelemetry-instrument python agents/byo_runner.py --model {model_key} --prompt "..."
+```
+
+#### Current Limitations
+
+- **Evaluator scoring:** `agentcore run eval` only works with managed runtime traces. BYO traces are visible in X-Ray but cannot be scored by AgentCore evaluators directly.
+- **Log export:** Requires additional `OTEL_EXPORTER_OTLP_LOGS_HEADERS` configuration for CloudWatch log group forwarding.
+- **Workaround:** Use local SDK-based evaluation (`strands-agents-evals` HelpfulnessEvaluator) for BYO agent scoring.
+
+---
+
 ## Error Handling
 
 | Condition | Handling |

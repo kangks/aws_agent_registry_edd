@@ -177,6 +177,12 @@ Minimum viable POC demonstrating AgentCore custom evaluators and observability f
     - Confirmed on-demand eval returns scores per session with explanations
     - All 15 sessions evaluated successfully with the `multiplier_domain_accuracy` evaluator
 
+- [x] 14. Implement BYO agent with CloudWatch observability
+  - [x] 14.1 Create byo_runner.py for non-runtime agent execution
+  - [x] 14.2 Run BYO agent with ADOT instrumentation for all 3 models
+  - [x] 14.3 Verify BYO traces appear in CloudWatch GenAI Observability
+  - [ ] 14.4 Run evaluator against BYO traces
+
 ## Notes
 
 - 3 models (not 5) — enough to show the comparison pattern without burning time/tokens on Opus and Nova Lite
