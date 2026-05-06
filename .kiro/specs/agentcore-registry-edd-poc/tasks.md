@@ -181,7 +181,11 @@ Minimum viable POC demonstrating AgentCore custom evaluators and observability f
   - [x] 14.1 Create byo_runner.py for non-runtime agent execution
   - [x] 14.2 Run BYO agent with ADOT instrumentation for all 3 models
   - [x] 14.3 Verify BYO traces appear in CloudWatch GenAI Observability
-  - [ ] 14.4 Run evaluator against BYO traces
+  - [x] 14.4 Run evaluator against BYO traces
+    - AgentCore evaluator cannot score BYO traces (managed runtime only)
+    - Workaround: Use local SDK evaluation (strands-agents-evals HelpfulnessEvaluator)
+    - Created scripts/run_byo_comparison.py for local SDK-based model comparison
+    - Results: sonnet avg=1.000, haiku avg=1.000, nova_pro avg=0.867
 
 ## Notes
 
