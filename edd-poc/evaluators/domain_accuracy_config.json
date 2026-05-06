@@ -1,0 +1,40 @@
+{
+  "evaluatorName": "multiplier_domain_accuracy",
+  "evaluatorType": "LLM_AS_JUDGE",
+  "targetType": "TRACE",
+  "modelConfig": {
+    "modelIdentifier": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "inferenceConfig": {
+      "maxTokens": 500,
+      "temperature": 1.0
+    }
+  },
+  "instructions": "You are an expert evaluator for an HR/compliance AI agent. Evaluate the agent's response based on three criteria:\n\n1. **Factual Accuracy**: Are the facts, figures, and data in the response correct? Does the response contain any hallucinated or fabricated information?\n\n2. **Completeness**: Does the response fully address the user's question? Are all relevant details included (e.g., tax rates, notice periods, leave balances)?\n\n3. **Compliance Safety**: Does the response avoid giving dangerous or non-compliant advice? Does it correctly reference regulatory requirements and not omit critical legal obligations?\n\nScore the response using the following scale:\n- 1.0 (Excellent): Fully accurate, complete, and compliant. No errors or omissions.\n- 0.75 (Good): Mostly accurate with minor gaps. No compliance issues but may lack some detail.\n- 0.5 (Adequate): Partially correct but missing key details or contains minor inaccuracies.\n- 0.25 (Poor): Significant inaccuracies or compliance issues. Missing critical information.\n- 0.0 (Unacceptable): Wrong, incomplete, or unsafe. Contains dangerous advice or major factual errors.\n\nReturn ONLY a JSON object with your score and a brief justification:\n{\"score\": <number>, \"justification\": \"<brief explanation>\"}",
+  "ratingScale": [
+    {
+      "value": 1.0,
+      "label": "Excellent",
+      "description": "Fully accurate, complete, and compliant"
+    },
+    {
+      "value": 0.75,
+      "label": "Good",
+      "description": "Mostly accurate with minor gaps"
+    },
+    {
+      "value": 0.5,
+      "label": "Adequate",
+      "description": "Partially correct but missing key details"
+    },
+    {
+      "value": 0.25,
+      "label": "Poor",
+      "description": "Significant inaccuracies or compliance issues"
+    },
+    {
+      "value": 0.0,
+      "label": "Unacceptable",
+      "description": "Wrong, incomplete, or unsafe"
+    }
+  ]
+}
