@@ -1,0 +1,22 @@
+{
+  "targets": {
+    "default": {
+      "resources": {
+        "runtimes": {
+          "multiplier_hr_agent": {
+            "runtimeId": "eddpoc_multiplier_hr_agent-y4I2jKCwEl",
+            "runtimeArn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:runtime/eddpoc_multiplier_hr_agent-y4I2jKCwEl",
+            "roleArn": "arn:aws:iam::654654616949:role/AgentCore-eddpoc-default-ApplicationAgentMultiplier-Y2C5zuJ5z98T"
+          }
+        },
+        "evaluators": {
+          "multiplier_domain_accuracy": {
+            "evaluatorId": "eddpoc_multiplier_domain_accuracy-DCjD5FFsrw",
+            "evaluatorArn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:evaluator/eddpoc_multiplier_domain_accuracy-DCjD5FFsrw"
+          }
+        },
+        "stackName": "AgentCore-eddpoc-default"
+      }
+    }
+  }
+}

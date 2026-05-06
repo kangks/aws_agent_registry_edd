@@ -1,0 +1,72 @@
+{
+  "$schema": "https://schema.agentcore.aws.dev/v1/agentcore.json",
+  "name": "eddpoc",
+  "version": 1,
+  "managedBy": "CDK",
+  "tags": {
+    "agentcore:created-by": "agentcore-cli",
+    "agentcore:project-name": "eddpoc"
+  },
+  "runtimes": [
+    {
+      "name": "multiplier_hr_agent",
+      "build": "CodeZip",
+      "entrypoint": "main.py",
+      "codeLocation": "agents/",
+      "runtimeVersion": "PYTHON_3_11",
+      "networkMode": "PUBLIC",
+      "protocol": "HTTP",
+      "idleTimeout": 900,
+      "maxLifetime": 3600
+    }
+  ],
+  "memories": [],
+  "credentials": [],
+  "evaluators": [
+    {
+      "name": "multiplier_domain_accuracy",
+      "level": "TRACE",
+      "config": {
+        "llmAsAJudge": {
+          "model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+          "instructions": "You are an expert evaluator for an HR/compliance AI agent. Evaluate the agent response in the following trace context: {context}. The assistant response to evaluate: {assistant_turn}. Evaluate based on three criteria: 1) Factual Accuracy - Are the facts correct? 2) Completeness - Does the response fully address the question? 3) Compliance Safety - Does the response avoid dangerous advice? Score using: 5=Excellent (accurate, complete, compliant), 4=Good (mostly accurate, minor gaps), 3=Adequate (partially correct, missing details), 2=Poor (significant errors), 1=Unacceptable (wrong or unsafe).",
+          "ratingScale": {
+            "numerical": [
+              {
+                "value": 1,
+                "label": "Poor",
+                "definition": "Fails to meet expectations"
+              },
+              {
+                "value": 2,
+                "label": "Fair",
+                "definition": "Partially meets expectations"
+              },
+              {
+                "value": 3,
+                "label": "Good",
+                "definition": "Meets expectations"
+              },
+              {
+                "value": 4,
+                "label": "Very Good",
+                "definition": "Exceeds expectations"
+              },
+              {
+                "value": 5,
+                "label": "Excellent",
+                "definition": "Far exceeds expectations"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "onlineEvalConfigs": [],
+  "agentCoreGateways": [],
+  "policyEngines": [],
+  "configBundles": [],
+  "abTests": [],
+  "httpGateways": []
+}

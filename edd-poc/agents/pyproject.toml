@@ -1,0 +1,14 @@
+[project]
+name = "multiplier-hr-agent"
+version = "0.1.0"
+description = "HR/Compliance agent for EDD POC"
+requires-python = ">=3.11"
+dependencies = [
+    "strands-agents[otel]",
+    "bedrock-agentcore",
+    "aws-opentelemetry-distro",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
