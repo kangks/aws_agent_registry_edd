@@ -597,6 +597,64 @@ opentelemetry-instrument python agents/byo_runner.py --model {model_key} --promp
 
 ---
 
+### Ground Truth vs Contender Comparison Pattern
+
+Instead of scoring each model independently (which only tells you absolute quality), the ground-truth comparison pattern evaluates whether a contender model produces **equivalent responses** to a known-good baseline.
+
+#### Why This Matters
+
+- **Absolute scoring** (HelpfulnessEvaluator) tells you "is this response good?" but doesn't tell you "is it as good as our best model?"
+- **Relative scoring** (CorrectnessEvaluator with `expected_assertion`) tells you "does this cheaper/faster model produce the same quality as the expensive one?"
+- This directly answers the business question: "Can we replace Sonnet with Haiku/Nova Pro without quality loss?"
+
+#### Implementation (BYO Path)
+
+```python
+from strands_evals.evaluators import CorrectnessEvaluator
+from strands_evals.types.evaluation import EvaluationData
+
+# 1. Run baseline (Sonnet) and capture responses
+baseline_response = str(baseline_agent(prompt))
+
+# 2. Run contender and capture session
+contender_response, contender_session = invoke_contender(prompt)
+
+# 3. Evaluate contender AGAINST baseline
+evaluator = CorrectnessEvaluator()
+eval_data = EvaluationData(
+    input=prompt,
+    actual_trajectory=contender_session,
+    expected_assertion=baseline_response,  # Sonnet's response as ground truth
+)
+results = evaluator.evaluate(eval_data)
+# Returns CORRECT (1.0) or INCORRECT (0.0)
+```
+
+The `CorrectnessEvaluator` with `expected_assertion` compares the contender's actual response against the baseline's response and determines if they are factually equivalent.
+
+#### Implementation (Managed Path)
+
+```bash
+# Use --expected-response flag to provide ground truth
+agentcore run eval \
+  --runtime multiplier_hr_haiku \
+  --evaluator multiplier_domain_accuracy \
+  --session-id <haiku_session_id> \
+  --expected-response "<sonnet's response text>" \
+  --days 1
+```
+
+The `--expected-response` flag passes Sonnet's response as context to the evaluator, enabling it to score the contender's response relative to the baseline.
+
+#### Key Design Decisions
+
+1. **Binary scoring (BYO):** CorrectnessEvaluator returns CORRECT/INCORRECT — simple pass/fail for "does it match?"
+2. **5-level scoring (Managed):** The LLM-as-a-Judge evaluator provides more granular feedback (1-5 scale)
+3. **Complementary metrics:** Always run HelpfulnessEvaluator alongside for absolute quality context
+4. **Same prompts, same tools:** All models use identical agent code and tools — only the LLM backbone differs
+
+---
+
 ## Error Handling
 
 | Condition | Handling |

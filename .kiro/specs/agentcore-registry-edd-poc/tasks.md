@@ -187,6 +187,22 @@ Minimum viable POC demonstrating AgentCore custom evaluators and observability f
     - Created scripts/run_byo_comparison.py for local SDK-based model comparison
     - Results: sonnet avg=1.000, haiku avg=1.000, nova_pro avg=0.867
 
+- [x] 15. Implement ground-truth vs contender model comparison
+  - [x] 15.1 Create scripts/run_groundtruth_comparison.py (BYO path)
+    - Uses Sonnet as baseline, evaluates Haiku and Nova Pro against it
+    - CorrectnessEvaluator with expected_assertion scores contender vs baseline response
+    - Results: Haiku 4/5 correct (0.800), Nova Pro 5/5 correct (1.000) vs Sonnet baseline
+    - Helpfulness: Sonnet 1.000, Haiku 0.800, Nova Pro 0.833
+  - [x] 15.2 Run managed path ground-truth comparison
+    - Invoked all 3 runtimes with same 3 prompts (9 invocations total)
+    - Used --expected-response flag to provide Sonnet's response as ground truth
+    - Results: All models scored 5/5 on simple prompts, 2/5 on complex (mock data issue)
+    - Sonnet avg 4.0, Haiku avg 4.0, Nova Pro avg 4.0
+  - [x] 15.3 Document comparison methodology in README and design.md
+    - Added "Ground Truth vs Contender Comparison" section to README
+    - Added "Ground Truth vs Contender Comparison Pattern" section to design.md
+    - Results saved to results/groundtruth_comparison.md and results/managed_groundtruth_comparison.md
+
 ## Notes
 
 - 3 models (not 5) — enough to show the comparison pattern without burning time/tokens on Opus and Nova Lite

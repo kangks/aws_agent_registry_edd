@@ -411,6 +411,52 @@ Generates: `results/byo_comparison.md` with helpfulness scores per model per pro
 
 Nova Pro scores lower on complex multi-tool prompts (0.667) and compliance detail (0.833), while Sonnet and Haiku achieve perfect helpfulness scores across all prompts.
 
+### Ground Truth vs Contender Comparison
+
+The most rigorous way to compare models: use one model (Sonnet) as the baseline, then evaluate whether contenders (Haiku, Nova Pro) produce equivalent responses.
+
+**BYO path (local SDK):**
+
+```bash
+AWS_PROFILE=ml-sandbox AWS_REGION=us-east-1 \
+  .venv/bin/python scripts/run_groundtruth_comparison.py
+```
+
+**Managed path (AgentCore):**
+
+```bash
+# 1. Invoke all 3 runtimes with same prompts
+agentcore invoke --runtime multiplier_hr_sonnet "<prompt>"
+agentcore invoke --runtime multiplier_hr_haiku "<prompt>"
+agentcore invoke --runtime multiplier_hr_nova_pro "<prompt>"
+
+# 2. Evaluate contenders with Sonnet's response as ground truth
+agentcore run eval --runtime multiplier_hr_haiku \
+  --evaluator multiplier_domain_accuracy \
+  --session-id <haiku_session_id> \
+  --expected-response "<sonnet's response>" --days 1
+```
+
+**Results (BYO path — CorrectnessEvaluator, binary CORRECT/INCORRECT):**
+
+| Comparison | Avg Correctness vs Baseline | Avg Helpfulness |
+|------------|---------------------------|-----------------|
+| Sonnet (baseline) | — | 1.000 |
+| Haiku vs Sonnet | 0.800 (4/5 correct) | 0.800 |
+| Nova Pro vs Sonnet | 1.000 (5/5 correct) | 0.833 |
+
+**Results (Managed path — multiplier_domain_accuracy, 1-5 scale):**
+
+| Model | Prompt 1 | Prompt 2 | Prompt 3 | Average |
+|-------|----------|----------|----------|---------|
+| Sonnet (baseline) | 5/5 | 5/5 | 2/5* | 4.0 |
+| Haiku vs Sonnet | 5/5 | 5/5 | 2/5* | 4.0 |
+| Nova Pro vs Sonnet | 5/5 | 5/5 | 2/5* | 4.0 |
+
+*\*Prompt 3 scored 2/5 across all models due to mock data (INR 55,000 annual salary flagged as unrealistic by the evaluator).*
+
+**Key insight:** Nova Pro achieves 5/5 correctness vs Sonnet on the BYO path, meaning it produces factually equivalent responses at lower cost. Haiku missed one prompt (leave balance — it asked for country instead of proceeding).
+
 ### Compare All Models (The Money Shot)
 
 Run 5 prompts × 3 models, evaluate everything, get a comparison table:
