@@ -25,10 +25,10 @@ Define Evaluators → Run Agent → Capture Traces → Score Traces → Compare 
 | **AgentCore Observability** | OpenTelemetry-based tracing via CloudWatch | Every agent action is captured and auditable |
 
 You don't need to use all three together. This POC demonstrates two deployment paths:
-1. **Managed** — deploy to AgentCore Runtime (zero infra)
-2. **BYO (Bring Your Own)** — run locally with OTEL, traces still flow to CloudWatch
+1. **Managed** — deploy to AgentCore Runtime (zero infra, full evaluator support)
+2. **BYO (Bring Your Own)** — run locally with ADOT, traces flow to CloudWatch for observability
 
-Both paths produce traces that the same evaluators can score.
+Both paths produce traces visible in CloudWatch GenAI Observability. The managed path additionally supports AgentCore evaluators (`agentcore run eval`) and online evaluation configs. The BYO path uses local SDK evaluation (`strands-agents-evals`) for scoring.
 
 ---
 
@@ -96,20 +96,28 @@ agent.invoke (root span)
 └── ... (continues until agent produces final answer)
 ```
 
-### Two Trace Capture Paths
+### Three Trace Capture Paths
 
-**Path 1: CloudWatch (production)**
-- Traces export to CloudWatch via OTEL collector
-- Evaluators run against CloudWatch traces via `agentcore eval run`
-- Best for: production monitoring, online evaluation, alarms
+**Path 1: AgentCore Runtime → CloudWatch (managed production)**
+- Traces export automatically via AgentCore's OTEL sidecar
+- AgentCore evaluators score traces via `agentcore run eval`
+- Online eval configs auto-score every invocation
+- Best for: production monitoring, continuous evaluation, quality gates
 
-**Path 2: InMemorySpanExporter (local development)**
+**Path 2: BYO Agent → CloudWatch via ADOT (self-hosted production)**
+- Agent runs on your compute (EC2, ECS, Lambda, local machine)
+- ADOT (`aws-opentelemetry-distro`) exports traces to CloudWatch/X-Ray
+- Traces visible in GenAI Observability dashboard
+- AgentCore evaluators NOT yet supported for BYO traces
+- Best for: existing infrastructure, gradual migration, observability without runtime lock-in
+
+**Path 3: InMemorySpanExporter (local development)**
 - Traces captured in-process using `InMemorySpanExporter`
 - Mapped to structured sessions via `StrandsInMemorySessionMapper`
-- Saved as JSON files for inspection
-- Best for: development iteration, debugging, offline comparison
+- Evaluated locally with `strands-agents-evals` SDK evaluators
+- Best for: development iteration, debugging, offline comparison, BYO evaluation
 
-This POC uses **Path 2** for the comparison scripts (faster iteration, no CloudWatch round-trip) and **Path 1** for the AgentCore Runtime demo.
+This POC uses **Path 1** for the managed runtime demo, **Path 2** for BYO observability, and **Path 3** for local SDK-based model comparison.
 
 ---
 
@@ -350,23 +358,58 @@ agentcore eval run --evaluator-name multiplier_domain_accuracy --service-name mu
 agentcore eval run --evaluator-name multiplier_deterministic --service-name multiplier-runtime
 ```
 
-### Demo 2: Local Agent with OTEL (BYO Path)
+### Demo 2: BYO Agent with CloudWatch Observability
 
-Run the same agent locally — traces export to CloudWatch, same evaluators score them:
+Run the same agent locally — traces export to CloudWatch via ADOT (AWS Distro for OpenTelemetry). The agent appears in CloudWatch GenAI Observability alongside managed runtime agents.
+
+**Single invocation with traces to CloudWatch:**
 
 ```bash
-# Run with Sonnet
-python agents/local_runner.py --model sonnet \
-  --prompt "Calculate monthly payroll for 90000 SGD annual salary in Singapore"
-
-# Run with Haiku
-python agents/local_runner.py --model haiku \
-  --prompt "What are the compliance requirements for Thailand?"
-
-# Evaluate the local traces
-agentcore eval run --evaluator-name multiplier_domain_accuracy --service-name multiplier-local-sonnet
-agentcore eval run --evaluator-name multiplier_deterministic --service-name multiplier-local-sonnet
+AGENT_OBSERVABILITY_ENABLED=true \
+OTEL_PYTHON_DISTRO=aws_distro \
+OTEL_PYTHON_CONFIGURATOR=aws_configurator \
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+OTEL_RESOURCE_ATTRIBUTES="service.name=multiplier-byo-sonnet" \
+AWS_PROFILE=ml-sandbox AWS_REGION=us-east-1 \
+.venv/bin/opentelemetry-instrument .venv/bin/python agents/byo_runner.py \
+  --model sonnet \
+  --prompt "What is the employment status of employee EMP-12345 in Singapore?"
 ```
+
+Change `service.name` per model: `multiplier-byo-sonnet`, `multiplier-byo-haiku`, `multiplier-byo-nova-pro`.
+
+**Full 3-model comparison with local SDK evaluation:**
+
+```bash
+python scripts/run_byo_comparison.py --models sonnet,haiku,nova_pro
+```
+
+Generates: `results/byo_comparison.md` with helpfulness scores per model per prompt.
+
+#### How BYO Evaluation Works
+
+| Aspect | Managed Runtime (Demo 1) | BYO Agent (Demo 2) |
+|--------|--------------------------|---------------------|
+| Agent runs on | AgentCore Runtime | Your machine / any compute |
+| Traces go to | CloudWatch (automatic) | CloudWatch via ADOT |
+| Visible in GenAI Observability | ✅ Yes | ✅ Yes |
+| AgentCore evaluator (`agentcore run eval`) | ✅ Works | ❌ Not supported yet |
+| Local SDK evaluation (`strands-agents-evals`) | ✅ Works | ✅ Works |
+| Online eval (auto-scoring) | ✅ Supported | ❌ Not supported yet |
+
+**Key difference:** Both paths send traces to CloudWatch, and both appear in the GenAI Observability dashboard. However, the AgentCore evaluator (`agentcore run eval`) currently only discovers traces linked to a managed runtime ARN. BYO traces are visible in X-Ray but not discoverable by the evaluator.
+
+**Workaround for BYO evaluation:** Use `scripts/run_byo_comparison.py` which captures traces in-memory with `StrandsEvalsTelemetry` and evaluates locally using `HelpfulnessEvaluator` from `strands-agents-evals`. This produces the same quality scores without needing AgentCore Runtime.
+
+#### BYO Results (Actual)
+
+| Model | Avg Helpfulness | Avg Latency |
+|-------|----------------|-------------|
+| sonnet | 1.000 | 7.8s |
+| haiku | 1.000 | 4.9s |
+| nova_pro | 0.867 | 4.1s |
+
+Nova Pro scores lower on complex multi-tool prompts (0.667) and compliance detail (0.833), while Sonnet and Haiku achieve perfect helpfulness scores across all prompts.
 
 ### Compare All Models (The Money Shot)
 
