@@ -3,7 +3,6 @@
 ## Customer Technical Briefing
 
 **Date:** May 8, 2026  
-**AWS Account:** 654654616949 (us-east-1)  
 **Project:** eddpoc — HR/Compliance Agent POC
 
 ---
