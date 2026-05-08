@@ -12,7 +12,7 @@
         "correctness": 1.0,
         "helpfulness": 1.0
       },
-      "last_eval_timestamp": "2026-05-07T23:12:56.633075+00:00",
+      "last_eval_timestamp": "2026-05-08T01:41:29.938536+00:00",
       "last_eval_evaluator": "registry_comparison",
       "tags": [
         "managed",
@@ -29,10 +29,10 @@
       "owner": "edd-poc",
       "description": "HR/Compliance agent - Haiku 4.5 (managed runtime)",
       "last_eval_score": {
-        "correctness": 0.6,
-        "helpfulness": 0.733
+        "correctness": 1.0,
+        "helpfulness": 0.933
       },
-      "last_eval_timestamp": "2026-05-07T23:12:56.633075+00:00",
+      "last_eval_timestamp": "2026-05-08T01:41:29.938536+00:00",
       "last_eval_evaluator": "registry_comparison",
       "tags": [
         "managed",
@@ -50,9 +50,9 @@
       "description": "HR/Compliance agent - Nova Pro (managed runtime)",
       "last_eval_score": {
         "correctness": 0.8,
-        "helpfulness": 0.8
+        "helpfulness": 0.867
       },
-      "last_eval_timestamp": "2026-05-07T23:12:56.633075+00:00",
+      "last_eval_timestamp": "2026-05-08T01:41:29.938536+00:00",
       "last_eval_evaluator": "registry_comparison",
       "tags": [
         "managed",
@@ -72,7 +72,7 @@
         "correctness": 1.0,
         "helpfulness": 1.0
       },
-      "last_eval_timestamp": "2026-05-07T23:12:56.633075+00:00",
+      "last_eval_timestamp": "2026-05-08T01:41:29.938536+00:00",
       "last_eval_evaluator": "registry_comparison",
       "tags": [
         "byo",
@@ -89,10 +89,10 @@
       "owner": "edd-poc",
       "description": "HR/Compliance agent - Haiku 4.5 (BYO via ADOT)",
       "last_eval_score": {
-        "correctness": 0.8,
-        "helpfulness": 0.833
+        "correctness": 1.0,
+        "helpfulness": 1.0
       },
-      "last_eval_timestamp": "2026-05-07T23:12:56.633075+00:00",
+      "last_eval_timestamp": "2026-05-08T01:41:29.938536+00:00",
       "last_eval_evaluator": "registry_comparison",
       "tags": [
         "byo",
@@ -109,10 +109,10 @@
       "owner": "edd-poc",
       "description": "HR/Compliance agent - Nova Pro (BYO via ADOT)",
       "last_eval_score": {
-        "correctness": 0.8,
-        "helpfulness": 0.733
+        "correctness": 1.0,
+        "helpfulness": 0.833
       },
-      "last_eval_timestamp": "2026-05-07T23:12:56.633075+00:00",
+      "last_eval_timestamp": "2026-05-08T01:41:29.938536+00:00",
       "last_eval_evaluator": "registry_comparison",
       "tags": [
         "byo",
