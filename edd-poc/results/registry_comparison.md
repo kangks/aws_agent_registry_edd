@@ -1,6 +1,6 @@
 # Agent Registry Comparison — All 6 Agents
 
-**Generated:** 2026-05-08 09:41:34
+**Generated:** 2026-05-08 15:38:29
 **Agents:** 3 managed (AgentCore Runtime) + 3 BYO (ADOT → CloudWatch)
 **Prompts:** 5 per agent = 30 total invocations
 **Execution:** ThreadPoolExecutor(max_workers=6) — all agents run concurrently
@@ -11,12 +11,12 @@
 
 | Agent | Model | Type | Last Eval Score | Last Eval Time |
 |-------|-------|------|----------------|----------------|
-| multiplier_hr_sonnet | us.anthropic.claude-sonnet-4-6 | managed | {"correctness": 1.0, "helpfulness": 1.0} | 2026-05-08T01:41:29 |
-| multiplier_hr_haiku | us.anthropic.claude-haiku-4-5- | managed | {"correctness": 1.0, "helpfulness": 0.933} | 2026-05-08T01:41:29 |
-| multiplier_hr_nova_pro | us.amazon.nova-pro-v1:0 | managed | {"correctness": 0.8, "helpfulness": 0.867} | 2026-05-08T01:41:29 |
-| multiplier_byo_sonnet | us.anthropic.claude-sonnet-4-6 | byo | {"correctness": 1.0, "helpfulness": 1.0} | 2026-05-08T01:41:29 |
-| multiplier_byo_haiku | us.anthropic.claude-haiku-4-5- | byo | {"correctness": 1.0, "helpfulness": 1.0} | 2026-05-08T01:41:29 |
-| multiplier_byo_nova_pro | us.amazon.nova-pro-v1:0 | byo | {"correctness": 1.0, "helpfulness": 0.833} | 2026-05-08T01:41:29 |
+| multiplier_hr_sonnet | us.anthropic.claude-sonnet-4-6 | managed | {"correctness": 0.2, "helpfulness": 0.667} | 2026-05-08T07:38:27 |
+| multiplier_hr_nova_2_pro | us.amazon.nova-2-pro-v1:0 | managed | {"correctness": 0.4, "helpfulness": 0.8} | 2026-05-08T07:38:27 |
+| multiplier_hr_glm_5 | zai.glm-5 | managed | {"correctness": 0.4, "helpfulness": 0.766} | 2026-05-08T07:38:27 |
+| multiplier_byo_sonnet | us.anthropic.claude-sonnet-4-6 | byo | {"correctness": 0.4, "helpfulness": 0.8} | 2026-05-08T07:38:27 |
+| multiplier_byo_nova_2_pro | us.amazon.nova-2-pro-v1:0 | byo | {"correctness": 0.4, "helpfulness": 0.9} | 2026-05-08T07:38:27 |
+| multiplier_byo_glm_5 | zai.glm-5 | byo | {"correctness": 0.2, "helpfulness": 0.866} | 2026-05-08T07:38:27 |
 
 ---
 
@@ -25,80 +25,80 @@
 ### multiplier_hr_sonnet (managed)
 
 - Success: 5/5
-- Avg latency: 17096ms
+- Avg latency: 16930ms
 
 | # | Prompt | Status | Latency |
 |---|--------|--------|---------|
-| 1 | What is the employment status of employee EMP-12345 in ... | ✓ | 18047ms |
-| 2 | What are the notice periods and regulatory requirements... | ✓ | 17439ms |
-| 3 | Calculate the monthly payroll breakdown for an employee... | ✓ | 16868ms |
-| 4 | Check the leave balance for employee EMP-67890. How man... | ✓ | 13487ms |
-| 5 | For employee EMP-11111 in India, look up their details,... | ✓ | 19637ms |
+| 1 | What is the employment status of employee EMP-12345 in ... | ✓ | 13834ms |
+| 2 | What are the notice periods and regulatory requirements... | ✓ | 16297ms |
+| 3 | Calculate the monthly payroll breakdown for an employee... | ✓ | 18594ms |
+| 4 | Check the leave balance for employee EMP-67890. How man... | ✓ | 16067ms |
+| 5 | For employee EMP-11111 in India, look up their details,... | ✓ | 19859ms |
 
-### multiplier_hr_haiku (managed)
+### multiplier_hr_nova_2_pro (managed)
 
 - Success: 5/5
-- Avg latency: 16774ms
+- Avg latency: 17677ms
 
 | # | Prompt | Status | Latency |
 |---|--------|--------|---------|
-| 1 | What is the employment status of employee EMP-12345 in ... | ✓ | 13881ms |
-| 2 | What are the notice periods and regulatory requirements... | ✓ | 17864ms |
-| 3 | Calculate the monthly payroll breakdown for an employee... | ✓ | 15060ms |
-| 4 | Check the leave balance for employee EMP-67890. How man... | ✓ | 13548ms |
-| 5 | For employee EMP-11111 in India, look up their details,... | ✓ | 23516ms |
+| 1 | What is the employment status of employee EMP-12345 in ... | ✓ | 15398ms |
+| 2 | What are the notice periods and regulatory requirements... | ✓ | 17146ms |
+| 3 | Calculate the monthly payroll breakdown for an employee... | ✓ | 17982ms |
+| 4 | Check the leave balance for employee EMP-67890. How man... | ✓ | 15135ms |
+| 5 | For employee EMP-11111 in India, look up their details,... | ✓ | 22726ms |
 
-### multiplier_hr_nova_pro (managed)
+### multiplier_hr_glm_5 (managed)
 
 - Success: 5/5
-- Avg latency: 15937ms
+- Avg latency: 18090ms
 
 | # | Prompt | Status | Latency |
 |---|--------|--------|---------|
-| 1 | What is the employment status of employee EMP-12345 in ... | ✓ | 14928ms |
-| 2 | What are the notice periods and regulatory requirements... | ✓ | 15604ms |
-| 3 | Calculate the monthly payroll breakdown for an employee... | ✓ | 15572ms |
-| 4 | Check the leave balance for employee EMP-67890. How man... | ✓ | 12635ms |
-| 5 | For employee EMP-11111 in India, look up their details,... | ✓ | 20945ms |
+| 1 | What is the employment status of employee EMP-12345 in ... | ✓ | 15271ms |
+| 2 | What are the notice periods and regulatory requirements... | ✓ | 19250ms |
+| 3 | Calculate the monthly payroll breakdown for an employee... | ✓ | 17392ms |
+| 4 | Check the leave balance for employee EMP-67890. How man... | ✓ | 14536ms |
+| 5 | For employee EMP-11111 in India, look up their details,... | ✓ | 24000ms |
 
 ### multiplier_byo_sonnet (byo)
 
 - Success: 5/5
-- Avg latency: 11882ms
+- Avg latency: 12178ms
 
 | # | Prompt | Status | Latency |
 |---|--------|--------|---------|
-| 1 | What is the employment status of employee EMP-12345 in ... | ✓ | 9708ms |
-| 2 | What are the notice periods and regulatory requirements... | ✓ | 12153ms |
-| 3 | Calculate the monthly payroll breakdown for an employee... | ✓ | 11646ms |
-| 4 | Check the leave balance for employee EMP-67890. How man... | ✓ | 8328ms |
-| 5 | For employee EMP-11111 in India, look up their details,... | ✓ | 17577ms |
+| 1 | What is the employment status of employee EMP-12345 in ... | ✓ | 9189ms |
+| 2 | What are the notice periods and regulatory requirements... | ✓ | 13277ms |
+| 3 | Calculate the monthly payroll breakdown for an employee... | ✓ | 11780ms |
+| 4 | Check the leave balance for employee EMP-67890. How man... | ✓ | 9048ms |
+| 5 | For employee EMP-11111 in India, look up their details,... | ✓ | 17595ms |
 
-### multiplier_byo_haiku (byo)
+### multiplier_byo_nova_2_pro (byo)
 
 - Success: 5/5
-- Avg latency: 7517ms
+- Avg latency: 9129ms
 
 | # | Prompt | Status | Latency |
 |---|--------|--------|---------|
-| 1 | What is the employment status of employee EMP-12345 in ... | ✓ | 6631ms |
-| 2 | What are the notice periods and regulatory requirements... | ✓ | 7222ms |
-| 3 | Calculate the monthly payroll breakdown for an employee... | ✓ | 7145ms |
-| 4 | Check the leave balance for employee EMP-67890. How man... | ✓ | 6414ms |
-| 5 | For employee EMP-11111 in India, look up their details,... | ✓ | 10172ms |
+| 1 | What is the employment status of employee EMP-12345 in ... | ✓ | 17618ms |
+| 2 | What are the notice periods and regulatory requirements... | ✓ | 6261ms |
+| 3 | Calculate the monthly payroll breakdown for an employee... | ✓ | 6304ms |
+| 4 | Check the leave balance for employee EMP-67890. How man... | ✓ | 6045ms |
+| 5 | For employee EMP-11111 in India, look up their details,... | ✓ | 9419ms |
 
-### multiplier_byo_nova_pro (byo)
+### multiplier_byo_glm_5 (byo)
 
 - Success: 5/5
-- Avg latency: 7320ms
+- Avg latency: 25331ms
 
 | # | Prompt | Status | Latency |
 |---|--------|--------|---------|
-| 1 | What is the employment status of employee EMP-12345 in ... | ✓ | 6631ms |
-| 2 | What are the notice periods and regulatory requirements... | ✓ | 6492ms |
-| 3 | Calculate the monthly payroll breakdown for an employee... | ✓ | 6559ms |
-| 4 | Check the leave balance for employee EMP-67890. How man... | ✓ | 6043ms |
-| 5 | For employee EMP-11111 in India, look up their details,... | ✓ | 10875ms |
+| 1 | What is the employment status of employee EMP-12345 in ... | ✓ | 17500ms |
+| 2 | What are the notice periods and regulatory requirements... | ✓ | 15492ms |
+| 3 | Calculate the monthly payroll breakdown for an employee... | ✓ | 19796ms |
+| 4 | Check the leave balance for employee EMP-67890. How man... | ✓ | 23483ms |
+| 5 | For employee EMP-11111 in India, look up their details,... | ✓ | 50385ms |
 
 ---
 
@@ -112,22 +112,22 @@
 | Agent | Type | Avg Correctness | Avg Helpfulness |
 |-------|------|----------------|-----------------|
 | sonnet (baseline) | — | — | 1.000 |
-| multiplier_hr_sonnet | managed | 1.000 | 1.000 |
-| multiplier_hr_haiku | managed | 1.000 | 0.933 |
-| multiplier_hr_nova_pro | managed | 0.800 | 0.867 |
-| multiplier_byo_sonnet | byo | 1.000 | 1.000 |
-| multiplier_byo_haiku | byo | 1.000 | 1.000 |
-| multiplier_byo_nova_pro | byo | 1.000 | 0.833 |
+| multiplier_hr_sonnet | managed | 0.200 | 0.667 |
+| multiplier_hr_nova_2_pro | managed | 0.400 | 0.800 |
+| multiplier_hr_glm_5 | managed | 0.400 | 0.766 |
+| multiplier_byo_sonnet | byo | 0.400 | 0.800 |
+| multiplier_byo_nova_2_pro | byo | 0.400 | 0.900 |
+| multiplier_byo_glm_5 | byo | 0.200 | 0.866 |
 
 ### Per-Prompt Correctness (vs Sonnet Baseline)
 
-| # | Prompt | multiplier_hr_sonnet | multiplier_hr_haiku | multiplier_hr_nova_p | multiplier_byo_sonne | multiplier_byo_haiku | multiplier_byo_nova_ |
+| # | Prompt | multiplier_hr_sonnet | multiplier_hr_nova_2 | multiplier_hr_glm_5 | multiplier_byo_sonne | multiplier_byo_nova_ | multiplier_byo_glm_5 |
 |---|--------| --- | --- | --- | --- | --- | --- |
-| 1 | What is the employment status of employee EMP... | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| 2 | What are the notice periods and regulatory re... | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| 3 | Calculate the monthly payroll breakdown for a... | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| 4 | Check the leave balance for employee EMP-6789... | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| 5 | For employee EMP-11111 in India, look up thei... | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| 1 | What is the employment status of employee EMP... | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ |
+| 2 | What are the notice periods and regulatory re... | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| 3 | Calculate the monthly payroll breakdown for a... | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ |
+| 4 | Check the leave balance for employee EMP-6789... | ✗ | ✓ | ✓ | ✓ | ✗ | ✗ |
+| 5 | For employee EMP-11111 in India, look up thei... | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 
 ---
 

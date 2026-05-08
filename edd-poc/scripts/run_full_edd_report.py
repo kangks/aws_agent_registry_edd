@@ -49,14 +49,14 @@ PROMPTS = [
     "For employee EMP-11111 in India, look up their details, check compliance rules, and calculate their payroll breakdown in INR.",
 ]
 
-MODELS = ["sonnet", "haiku", "nova_pro"]
+MODELS = ["sonnet", "nova_2_pro", "glm_5"]
 BASELINE = "sonnet"
-CONTENDERS = ["haiku", "nova_pro"]
+CONTENDERS = ["nova_2_pro", "glm_5"]
 
 RUNTIME_NAMES = {
     "sonnet": "multiplier_hr_sonnet",
-    "haiku": "multiplier_hr_haiku",
-    "nova_pro": "multiplier_hr_nova_pro",
+    "nova_2_pro": "multiplier_hr_nova_2_pro",
+    "glm_5": "multiplier_hr_glm_5",
 }
 
 ADOT_ENV = {

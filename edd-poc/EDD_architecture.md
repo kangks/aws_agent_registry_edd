@@ -354,7 +354,447 @@ The most rigorous evaluation approach:
 
 ---
 
-## 9. Results & Comparison
+## 9. Agentic Trajectory Comparison
+
+The traces captured during evaluation contain the **full agentic loop** — every reasoning step, tool decision, parameter selection, and synthesis. This section compares how each model navigates the same task.
+
+### What's Captured in Each Trace
+
+Each trace file (`results/traces/{model}_prompt_{n}.json`) contains OTEL spans of three types:
+
+| Span Type | What It Captures | Example |
+|-----------|-----------------|---------|
+| `inference` | Model reasoning + tool decisions | `<thinking>I need salary first</thinking>` → `tool_use: employee_lookup(...)` |
+| `execute_tool` | Tool call params + raw result | `employee_lookup(EMP-11111, India)` → `{"salary": 55000}` |
+| `inference` (cycle 2+) | Post-tool reasoning + next action | Sees salary=55000 → calls `payroll_calculator(55000, INR)` |
+
+### Trajectory Comparison: Multi-Tool Query (Prompt 5)
+
+**Prompt:** "For employee EMP-11111 in India, look up their details, check compliance rules, and calculate their payroll breakdown in INR."
+
+This is the most revealing prompt — it requires 3 tools and the model must decide whether to call them sequentially (waiting for salary) or in parallel (guessing salary).
+
+#### Sonnet 4.6 — Sequential with Parallel Optimization (12.5s)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Cycle 1: Reasoning + Parallel Tool Calls                         │
+├─────────────────────────────────────────────────────────────────┤
+│ 🧠 "I can fetch employee details and compliance rules            │
+│    simultaneously, then use the salary for payroll."             │
+│                                                                  │
+│ 🔧 employee_lookup(EMP-11111, India)  ──┐                        │
+│ 🔧 compliance_checker(India)          ──┤ PARALLEL               │
+│                                         │                        │
+│ 📥 {"salary": 55000, "dept": "Product"} ◄┘                       │
+│ 📥 {"notice_periods": {...}, ...}       ◄┘                       │
+├─────────────────────────────────────────────────────────────────┤
+│ Cycle 2: Use Actual Salary                                       │
+├─────────────────────────────────────────────────────────────────┤
+│ 🧠 "Got salary = 55,000 INR. Now calculate payroll."             │
+│ 🔧 payroll_calculator(55000, India, INR)                         │
+│ 📥 {"gross_monthly": 4583.33, "net": 3116.67}                   │
+├─────────────────────────────────────────────────────────────────┤
+│ Cycle 3: Final Synthesis                                         │
+├─────────────────────────────────────────────────────────────────┤
+│ 💬 Formatted table with employee details + compliance +          │
+│    payroll breakdown. Rich markdown with emojis.                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Strategy:** Parallel where safe (lookup + compliance don't depend on each other), sequential where needed (payroll needs salary from lookup). **3 inference cycles, 3 tool calls.**
+
+#### Nova 2 Pro — Fully Sequential with Explicit Reasoning (6.6s)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Cycle 1: Reasoning + First Tool                                  │
+├─────────────────────────────────────────────────────────────────┤
+│ 🧠 <thinking> I need to:                                         │
+│    1. Look up employee details (to get salary)                   │
+│    2. Check compliance rules                                     │
+│    3. Calculate payroll (needs salary from step 1)               │
+│    I'll start with employee_lookup. </thinking>                  │
+│                                                                  │
+│ 🔧 employee_lookup(EMP-11111, India)                             │
+│ 📥 {"salary": 55000, "dept": "Product"}                          │
+├─────────────────────────────────────────────────────────────────┤
+│ Cycle 2: Parallel (compliance + payroll)                         │
+├─────────────────────────────────────────────────────────────────┤
+│ 🧠 <thinking> Now I have salary=55000.                           │
+│    I can call compliance + payroll in parallel. </thinking>      │
+│                                                                  │
+│ 🔧 compliance_checker(India)          ──┐ PARALLEL               │
+│ 🔧 payroll_calculator(55000, India, INR)┘                        │
+│ 📥 {"notice_periods": {...}}            ◄┘                       │
+│ 📥 {"net_monthly": 3116.67}            ◄┘                       │
+├─────────────────────────────────────────────────────────────────┤
+│ Cycle 3: Final Synthesis                                         │
+├─────────────────────────────────────────────────────────────────┤
+│ 💬 Concise bullet-point summary. No markdown tables.             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Strategy:** Sequential first (get salary), then parallel (compliance + payroll). Explicit `<thinking>` tags show reasoning. **3 inference cycles, 3 tool calls.** Fastest overall.
+
+#### GLM 5 — Parallel All-at-Once (20.3s)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Cycle 1: All Tools in Parallel                                   │
+├─────────────────────────────────────────────────────────────────┤
+│ 🔧 employee_lookup(EMP-11111, India)    ──┐                      │
+│ 🔧 compliance_checker(India)            ──┤ ALL PARALLEL         │
+│ 🔧 payroll_calculator(55000, India, INR)──┘                      │
+│                                                                  │
+│ 📥 {"salary": 55000, ...}               ◄┘                      │
+│ 📥 {"notice_periods": {...}}            ◄┘                       │
+│ 📥 {"net_monthly": 3116.67}            ◄┘                       │
+├─────────────────────────────────────────────────────────────────┤
+│ Cycle 2: Final Synthesis                                         │
+├─────────────────────────────────────────────────────────────────┤
+│ 💬 Structured tables with ₹ currency symbols.                    │
+│    Complete but slower due to large context window.              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Strategy:** Calls all 3 tools simultaneously. In this run it correctly used 55000 (may have inferred from context), but this pattern is risky — if the salary isn't inferrable, it would guess. **2 inference cycles, 3 tool calls.** Slowest due to large model size.
+
+### Tool Use Comparison Table
+
+| Dimension | Sonnet 4.6 | Nova 2 Pro | GLM 5 |
+|-----------|-----------|-----------|-------|
+| **Avg Latency** | 8,613ms | 3,724ms | 13,041ms |
+| **Inference Cycles (Prompt 5)** | 3 | 3 | 2 |
+| **Tool Calls (Prompt 5)** | 3 | 3 | 3 |
+| **Parallel Strategy** | Smart (parallel where safe) | Smart (sequential → parallel) | Aggressive (all parallel) |
+| **Salary Handling** | ✅ Waits for lookup | ✅ Waits for lookup | ⚠️ Parallel (risky) |
+| **Reasoning Visibility** | Hidden (natural language) | Explicit (`<thinking>` tags) | Hidden (no preamble) |
+| **Response Format** | Rich markdown + emojis | Concise bullets | Structured tables |
+| **Tool Parameter Order** | `(employee_id, country)` | `(country, employee_id)` | `(employee_id, country)` |
+
+### Key Insight: Why Trajectory Comparison Matters
+
+The tool use graph shows **what** was called. The trajectory comparison shows **why** and **how**:
+
+- **Sonnet** reasons in natural language, parallelizes independent calls, and produces rich formatted output
+- **Nova 2 Pro** shows explicit chain-of-thought, correctly identifies data dependencies, and is 2x faster
+- **GLM 5** skips reasoning preamble, calls everything at once (risky for dependent tools), but produces correct results when parameters are inferrable
+
+This is the kind of behavioral difference that simple correctness scores miss — two agents can both score 1.0 on correctness while having fundamentally different reliability profiles for edge cases.
+
+### Graphical Trace Representations
+
+We use three complementary visualizations to compare traces across models:
+
+#### A. Timeline Waterfall — Where Does Time Go?
+
+Shows each span as a horizontal bar, aligned to a common time axis. Immediately reveals parallelism and bottlenecks.
+
+```mermaid
+gantt
+    title Prompt 5: Multi-Tool Query — Timeline Comparison
+    dateFormat X
+    axisFormat %s
+
+    section Sonnet (12.5s)
+    Inference 1 (reasoning)        :s1, 0, 3000
+    employee_lookup                :s2, 3000, 3001
+    compliance_checker             :s3, 3000, 3001
+    Inference 2 (use salary)       :s4, 3001, 6500
+    payroll_calculator             :s5, 6500, 6501
+    Inference 3 (synthesize)       :s6, 6501, 12500
+
+    section Nova 2 Pro (6.6s)
+    Inference 1 (thinking)         :n1, 0, 2000
+    employee_lookup                :n2, 2000, 2001
+    Inference 2 (thinking)         :n3, 2001, 3700
+    compliance_checker             :n4, 3700, 3701
+    payroll_calculator             :n5, 3700, 3701
+    Inference 3 (synthesize)       :n6, 3701, 6600
+
+    section GLM 5 (20.3s)
+    Inference 1 (plan)             :g1, 0, 5000
+    employee_lookup                :g2, 5000, 5001
+    compliance_checker             :g3, 5000, 5001
+    payroll_calculator             :g4, 5000, 5001
+    Inference 2 (synthesize)       :g5, 5001, 20300
+```
+
+**What this reveals:**
+- Tool execution is near-instant (< 1ms) — all time is spent in **inference** (model thinking)
+- Sonnet spends time on rich formatting in the final synthesis
+- Nova 2 Pro's `<thinking>` is fast and focused — minimal synthesis time
+- GLM 5's single long synthesis span suggests it's generating a very detailed response
+
+#### B. Data Dependency DAG — What Depends on What?
+
+Shows which tool calls depend on results from other calls. Reveals whether a model correctly identifies dependencies or makes unsafe parallel calls.
+
+```mermaid
+graph TD
+    subgraph "Correct Strategy (Sonnet & Nova 2 Pro)"
+        P1[Prompt: EMP-11111 India] --> EL1[employee_lookup]
+        P1 --> CC1[compliance_checker]
+        EL1 -->|salary=55000| PC1[payroll_calculator<br/>annual_salary=55000]
+        CC1 --> SYN1[Final Synthesis]
+        PC1 --> SYN1
+        EL1 --> SYN1
+    end
+
+    subgraph "Risky Strategy (GLM 5 / old Nova Pro v1)"
+        P2[Prompt: EMP-11111 India] --> EL2[employee_lookup]
+        P2 --> CC2[compliance_checker]
+        P2 -->|guessed salary?| PC2[payroll_calculator<br/>annual_salary=???]
+        EL2 --> SYN2[Final Synthesis]
+        CC2 --> SYN2
+        PC2 --> SYN2
+    end
+
+    style PC1 fill:#d4edda,stroke:#28a745
+    style PC2 fill:#f8d7da,stroke:#dc3545
+```
+
+**What this reveals:**
+- `payroll_calculator` has a **data dependency** on `employee_lookup` (needs salary)
+- `compliance_checker` is **independent** — safe to call in parallel with lookup
+- Models that call all 3 in parallel risk using a guessed/hallucinated salary
+- The DAG makes the dependency explicit — useful for designing guardrails
+
+#### C. Swim Lane Comparison — Same Prompt, Different Behaviors
+
+Shows the step-by-step execution of all 3 models side-by-side for direct comparison.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Sonnet
+    participant Nova2Pro as Nova 2 Pro
+    participant GLM5 as GLM 5
+
+    User->>Sonnet: "EMP-11111 India: lookup + compliance + payroll"
+    User->>Nova2Pro: (same prompt)
+    User->>GLM5: (same prompt)
+
+    Note over Sonnet: "I'll fetch details and<br/>compliance simultaneously"
+    Note over Nova2Pro: <thinking> Need salary first.<br/>Start with employee_lookup </thinking>
+    Note over GLM5: (no preamble)
+
+    Sonnet->>Sonnet: employee_lookup(EMP-11111, India)
+    Sonnet->>Sonnet: compliance_checker(India)
+    Nova2Pro->>Nova2Pro: employee_lookup(EMP-11111, India)
+    GLM5->>GLM5: employee_lookup(EMP-11111, India)
+    GLM5->>GLM5: compliance_checker(India)
+    GLM5->>GLM5: payroll_calculator(55000, India, INR)
+
+    Note over Sonnet: Got salary=55000.<br/>Now calculate payroll.
+    Note over Nova2Pro: Got salary=55000.<br/>Call compliance + payroll.
+
+    Sonnet->>Sonnet: payroll_calculator(55000, India, INR)
+    Nova2Pro->>Nova2Pro: compliance_checker(India)
+    Nova2Pro->>Nova2Pro: payroll_calculator(55000, India, INR)
+
+    Note over Sonnet: 📊 Rich markdown tables
+    Note over Nova2Pro: 📋 Concise bullet list
+    Note over GLM5: 📊 Structured tables
+
+    Sonnet-->>User: Response (12.5s)
+    Nova2Pro-->>User: Response (6.6s)
+    GLM5-->>User: Response (20.3s)
+```
+
+**What this reveals:**
+- The **temporal ordering** of decisions across models
+- Nova 2 Pro finishes first despite having more inference cycles (faster per-cycle)
+- GLM 5 fires all tools immediately but takes longest overall (large model, slow generation)
+- Sonnet's parallel strategy (lookup + compliance) is optimal for this dependency graph
+
+#### D. Aggregate Trace Metrics — Comparing Across All Prompts
+
+For comparing patterns across many invocations, a summary table with sparkline-style indicators:
+
+| Metric | Sonnet | Nova 2 Pro | GLM 5 |
+|--------|--------|-----------|-------|
+| **Avg inference cycles/prompt** | 2.4 | 2.4 | 1.8 |
+| **Avg tool calls/prompt** | 1.4 | 1.4 | 1.4 |
+| **Parallel tool calls** | 1 (Prompt 5) | 1 (Prompt 5) | 1 (Prompt 5) |
+| **Time in inference** | 95% | 95% | 95% |
+| **Time in tools** | <1% | <1% | <1% |
+| **Avg tokens/prompt** | ~1,800 | ~900 | ~1,400 |
+| **Reasoning overhead** | 0% (hidden) | ~15% (thinking tags) | 0% (hidden) |
+
+### How to Generate These Visualizations
+
+The trace JSON files at `results/traces/{model}_prompt_{n}.json` contain all the data needed:
+
+```python
+# Extract timeline data from trace
+for span in trace["spans"]:
+    span_type = span["span_type"]  # "inference" or "execute_tool"
+    start = span["span_info"]["start_time"]
+    end = span["span_info"]["end_time"]
+    
+    if span_type == "execute_tool":
+        tool_name = span["tool_call"]["name"]
+        tool_args = span["tool_call"]["arguments"]
+        tool_result = span["tool_result"]["content"]
+    
+    elif span_type == "inference":
+        # Extract reasoning from assistant messages
+        for msg in span["messages"]:
+            if msg["role"] == "assistant":
+                for content in msg["content"]:
+                    if content["content_type"] == "tool_use":
+                        # Tool decision point
+                        ...
+                    elif "<thinking>" in content.get("text", ""):
+                        # Explicit reasoning
+                        ...
+```
+
+The Mermaid diagrams above can be rendered in:
+- GitHub/GitLab markdown (native support)
+- VS Code with Mermaid extension
+- Any Mermaid-compatible viewer (mermaid.live)
+- Exported to PNG/SVG via `mmdc` CLI
+
+---
+
+## 10. Evaluation Sequence Diagrams
+
+### Managed Path: AgentCore Runtime + Online Evaluation
+
+```mermaid
+sequenceDiagram
+    participant Client as Client<br/>(agentcore invoke)
+    participant Runtime as AgentCore Runtime<br/>(OTEL sidecar)
+    participant CW as CloudWatch<br/>GenAI Observability
+    participant Eval as Evaluator<br/>(LLM Judge / Lambda)
+    participant Reg as Registry<br/>(local + AWS)
+
+    Client->>Runtime: 1. invoke(prompt)
+    activate Runtime
+
+    Note over Runtime: 2. Agent executes<br/>Inference Span 1<br/>Tool Span 1<br/>Inference Span 2<br/>Tool Span 2<br/>Inference Span 3
+
+    Runtime-->>Client: 3. response
+    deactivate Runtime
+
+    Runtime->>CW: 4. Export trace (automatic OTEL sidecar)
+    activate CW
+
+    Note over CW: Trace indexed (~10 min)
+
+    CW->>Eval: 5. Online eval trigger (100% sampling)
+    activate Eval
+    Note over Eval: 6. LLM reads trace,<br/>scores 1-5 on rubric
+    Eval-->>CW: 7. Store eval score
+    deactivate Eval
+    deactivate CW
+
+    Client->>CW: 8. agentcore run eval (on-demand)
+    activate CW
+    CW->>Eval: 9. Fetch trace + run evaluator
+    activate Eval
+    Eval-->>Client: 10. eval results (score + justification)
+    deactivate Eval
+    deactivate CW
+
+    Client->>Reg: 11. Update registry with scores
+```
+
+**Key points:**
+- Steps 1-3: Normal agent invocation (client → runtime → response)
+- Step 4: OTEL sidecar automatically exports trace to CloudWatch (no code needed)
+- Steps 5-7: Online evaluation auto-triggers (100% sampling) — LLM judge scores the trace
+- Steps 8-10: On-demand evaluation via `agentcore run eval` CLI
+- Step 11: Registry updated with latest scores for tracking over time
+
+### BYO Path: ADOT + Local SDK Evaluation
+
+```mermaid
+sequenceDiagram
+    participant Client as Client<br/>(script / CLI)
+    participant Agent as BYO Agent<br/>(your compute + ADOT)
+    participant CW as CloudWatch<br/>GenAI Observability
+    participant SDK as Local SDK Eval<br/>(strands-evals<br/>InMemoryExporter)
+    participant Reg as Registry<br/>(local + AWS)
+
+    Client->>Agent: 1. invoke (opentelemetry-instrument)
+    activate Agent
+
+    Note over Agent: 2. Agent executes<br/>Inference Span 1<br/>Tool Span 1<br/>Inference Span 2<br/>Tool Span 2<br/>Inference Span 3
+
+    Agent-->>Client: 3. response
+    deactivate Agent
+
+    par Trace export (async)
+        Agent->>CW: 4. ADOT exports trace (http/protobuf)
+        Note over CW: Trace visible in<br/>GenAI Observability dashboard
+    and In-memory capture (sync)
+        Agent->>SDK: 5. Spans captured in-memory
+    end
+
+    activate SDK
+    Note over SDK: 6. StrandsInMemorySessionMapper<br/>maps spans → structured session
+
+    Note over SDK: 7. Run evaluators:<br/>• CorrectnessEvaluator (vs baseline)<br/>• HelpfulnessEvaluator<br/>• FaithfulnessEvaluator<br/>• CoherenceEvaluator<br/>• ToolSelectionAccuracy<br/>• ToolParameterAccuracy
+
+    SDK-->>Client: 8. eval scores
+    deactivate SDK
+
+    Client->>Reg: 9. Update registry with scores
+```
+
+**Key differences from Managed path:**
+- Step 4: ADOT (not sidecar) exports traces — requires env vars but no code changes
+- Steps 5-7: Evaluation happens **locally** via `strands-agents-evals` SDK, not via AgentCore
+- The `InMemorySpanExporter` captures spans in-process (parallel to ADOT export)
+- `StrandsInMemorySessionMapper` converts raw spans into structured sessions for evaluators
+- No online eval (auto-scoring) — must be triggered by script
+
+### Side-by-Side: What Each Path Produces
+
+```mermaid
+graph TB
+    subgraph Managed["MANAGED PATH"]
+        direction TB
+        M_Trace["CloudWatch Traces<br/>• Linked to runtime ARN<br/>• Discoverable by agentcore eval"]
+        M_Eval["AgentCore Evaluator<br/>• multiplier_domain_accuracy (1-5)<br/>• multiplier_deterministic (Lambda)<br/>• Online eval (auto, 100% sampling)<br/>• On-demand via CLI"]
+        M_Trace --> M_Eval
+    end
+
+    subgraph BYO["BYO PATH"]
+        direction TB
+        B_Trace["CloudWatch Traces<br/>• Linked to service.name<br/>• NOT discoverable by agentcore"]
+        B_Eval["Local SDK Evaluator<br/>• CorrectnessEvaluator (0/1)<br/>• HelpfulnessEvaluator (0-1)<br/>• FaithfulnessEvaluator (0-1)<br/>• CoherenceEvaluator (0-1)<br/>• ToolAccuracy (0-1)<br/>• Triggered by script"]
+        B_Trace --> B_Eval
+    end
+
+    M_Eval --> Registry["Agent Registry (unified)<br/>• Both paths update same registry<br/>• Cross-path comparison<br/>• Stale detection"]
+    B_Eval --> Registry
+
+    style Managed fill:#E8F5E9,stroke:#82b366
+    style BYO fill:#E3F2FD,stroke:#6c8ebf
+    style Registry fill:#FFF3E0,stroke:#d79b00
+```
+
+### Evaluation Timing: When Does Each Step Happen?
+
+| Step | Managed | BYO |
+|------|---------|-----|
+| Agent invocation | T+0s | T+0s |
+| Trace available in CloudWatch | T+10min (indexing) | T+10min (indexing) |
+| Online eval score available | T+12min (auto) | ❌ Not supported |
+| On-demand eval (`agentcore run eval`) | T+10min+ (after indexing) | ❌ Not supported |
+| Local SDK eval score | T+0s (in-process) | T+0s (in-process) |
+| Registry updated | T+0s (script) | T+0s (script) |
+
+**Practical implication:** For rapid iteration during development, both paths use local SDK evaluation (instant). The managed path additionally provides continuous online evaluation for production monitoring.
+
+---
+
+## 11. Results & Comparison
 
 ### 6-Agent Registry Comparison (Latest Run: May 8, 2026)
 
@@ -422,7 +862,7 @@ Based on the evaluation data:
 
 ---
 
-## 10. How to Reproduce
+## 12. How to Reproduce
 
 ### Prerequisites
 - AWS account with Bedrock model access (Sonnet 4, Haiku 4.5, Nova Pro, Sonnet 4.5 for judge)

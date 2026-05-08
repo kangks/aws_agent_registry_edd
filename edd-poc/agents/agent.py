@@ -2,7 +2,7 @@
 Agent factory and tool definitions for the Multiplier EDD POC.
 
 Provides a configurable HR/compliance agent with 4 tools and support
-for 3 Bedrock model backends (Sonnet, Haiku, Nova Pro).
+for multiple Bedrock model backends.
 """
 
 from strands import Agent, tool
@@ -14,8 +14,8 @@ from strands import Agent, tool
 
 SUPPORTED_MODELS: dict[str, str] = {
     "sonnet": "us.anthropic.claude-sonnet-4-6",
-    "haiku": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    "nova_pro": "us.amazon.nova-pro-v1:0",
+    "nova_2_pro": "us.amazon.nova-pro-v1:0",
+    "glm_5": "zai.glm-5",
 }
 
 

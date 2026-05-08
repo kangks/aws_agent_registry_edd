@@ -4,7 +4,10 @@
   "managedBy": "CDK",
   "tags": {
     "agentcore:created-by": "agentcore-cli",
-    "agentcore:project-name": "eddpoc"
+    "agentcore:project-name": "eddpoc",
+    "app": "multiplier-hr-agent",
+    "project": "eddpoc",
+    "env": "dev"
   },
   "runtimes": [
     {
@@ -22,7 +25,7 @@
       }
     },
     {
-      "name": "multiplier_hr_haiku",
+      "name": "multiplier_hr_nova_2_pro",
       "build": "CodeZip",
       "entrypoint": "main.py",
       "codeLocation": "agents/",
@@ -32,11 +35,11 @@
       "idleTimeout": 900,
       "maxLifetime": 3600,
       "environmentVariables": {
-        "AGENT_MODEL_KEY": "haiku"
+        "AGENT_MODEL_KEY": "nova_2_pro"
       }
     },
     {
-      "name": "multiplier_hr_nova_pro",
+      "name": "multiplier_hr_glm_5",
       "build": "CodeZip",
       "entrypoint": "main.py",
       "codeLocation": "agents/",
@@ -46,7 +49,7 @@
       "idleTimeout": 900,
       "maxLifetime": 3600,
       "environmentVariables": {
-        "AGENT_MODEL_KEY": "nova_pro"
+        "AGENT_MODEL_KEY": "glm_5"
       }
     }
   ],
@@ -104,8 +107,8 @@
       "enableOnCreate": true
     },
     {
-      "name": "eval_haiku",
-      "agent": "multiplier_hr_haiku",
+      "name": "eval_nova_2_pro",
+      "agent": "multiplier_hr_nova_2_pro",
       "evaluators": [
         "multiplier_domain_accuracy"
       ],
@@ -113,8 +116,8 @@
       "enableOnCreate": true
     },
     {
-      "name": "eval_nova_pro",
-      "agent": "multiplier_hr_nova_pro",
+      "name": "eval_glm_5",
+      "agent": "multiplier_hr_glm_5",
       "evaluators": [
         "multiplier_domain_accuracy"
       ],

@@ -103,8 +103,8 @@ ALL_EVALUATORS = SDK_EVALUATOR_NAMES + CUSTOM_EVALUATORS
 # These are approximate Bedrock on-demand pricing estimates
 MODEL_PRICING = {
     "sonnet": {"input_per_1k": 0.003, "output_per_1k": 0.015, "avg_input_tokens": 800, "avg_output_tokens": 400},
-    "haiku": {"input_per_1k": 0.001, "output_per_1k": 0.005, "avg_input_tokens": 800, "avg_output_tokens": 400},
-    "nova_pro": {"input_per_1k": 0.0008, "output_per_1k": 0.0032, "avg_input_tokens": 800, "avg_output_tokens": 400},
+    "nova_2_pro": {"input_per_1k": 0.0008, "output_per_1k": 0.0032, "avg_input_tokens": 800, "avg_output_tokens": 400},
+    "glm_5": {"input_per_1k": 0.00057, "output_per_1k": 0.0021, "avg_input_tokens": 800, "avg_output_tokens": 400},
 }
 
 
@@ -1455,8 +1455,8 @@ def main():
     parser.add_argument(
         "--models",
         type=str,
-        default="sonnet,haiku,nova_pro",
-        help="Comma-separated model keys to compare (default: sonnet,haiku,nova_pro)",
+        default="sonnet,nova_2_pro,glm_5",
+        help="Comma-separated model keys to compare (default: sonnet,nova_2_pro,glm_5)",
     )
     args = parser.parse_args()
 

@@ -60,11 +60,11 @@ def _get_record_id_for_agent(agent_name: str, registry_info: dict) -> str | None
     # Map from local names to AWS registry names
     name_map = {
         "multiplier_hr_sonnet": "multiplier-hr-sonnet-managed",
-        "multiplier_hr_haiku": "multiplier-hr-haiku-managed",
-        "multiplier_hr_nova_pro": "multiplier-hr-nova-pro-managed",
+        "multiplier_hr_nova_2_pro": "multiplier-hr-nova-2-pro-managed",
+        "multiplier_hr_glm_5": "multiplier-hr-glm-5-managed",
         "multiplier_byo_sonnet": "multiplier-hr-sonnet-byo",
-        "multiplier_byo_haiku": "multiplier-hr-haiku-byo",
-        "multiplier_byo_nova_pro": "multiplier-hr-nova-pro-byo",
+        "multiplier_byo_nova_2_pro": "multiplier-hr-nova-2-pro-byo",
+        "multiplier_byo_glm_5": "multiplier-hr-glm-5-byo",
     }
     aws_name = name_map.get(agent_name)
     if not aws_name:
@@ -181,14 +181,14 @@ PROMPTS = [
 
 MANAGED_AGENTS = [
     {"name": "multiplier_hr_sonnet", "runtime": "multiplier_hr_sonnet", "model_key": "sonnet"},
-    {"name": "multiplier_hr_haiku", "runtime": "multiplier_hr_haiku", "model_key": "haiku"},
-    {"name": "multiplier_hr_nova_pro", "runtime": "multiplier_hr_nova_pro", "model_key": "nova_pro"},
+    {"name": "multiplier_hr_nova_2_pro", "runtime": "multiplier_hr_nova_2_pro", "model_key": "nova_2_pro"},
+    {"name": "multiplier_hr_glm_5", "runtime": "multiplier_hr_glm_5", "model_key": "glm_5"},
 ]
 
 BYO_AGENTS = [
     {"name": "multiplier_byo_sonnet", "model_key": "sonnet", "service_name": "multiplier-byo-sonnet"},
-    {"name": "multiplier_byo_haiku", "model_key": "haiku", "service_name": "multiplier-byo-haiku"},
-    {"name": "multiplier_byo_nova_pro", "model_key": "nova_pro", "service_name": "multiplier-byo-nova-pro"},
+    {"name": "multiplier_byo_nova_2_pro", "model_key": "nova_2_pro", "service_name": "multiplier-byo-nova-2-pro"},
+    {"name": "multiplier_byo_glm_5", "model_key": "glm_5", "service_name": "multiplier-byo-glm-5"},
 ]
 
 ADOT_ENV = {
@@ -302,31 +302,107 @@ def run_byo_agent(agent_info: dict) -> dict:
 # Phase 2: In-memory evaluation
 # ---------------------------------------------------------------------------
 
-def run_evaluation(all_agent_results: list[dict]) -> dict:
+def _evaluate_single_agent(agent_data: dict, baseline_responses: list[str], prompts: list[str]) -> tuple[str, dict]:
     """
-    Run in-memory evaluation for all agents.
+    Evaluate a single agent against baseline. Thread-safe — each thread
+    creates its own telemetry exporter, agent, and evaluators.
 
-    Uses Sonnet (managed) as baseline for correctness comparison.
-    Evaluates all agents with HelpfulnessEvaluator.
+    Returns (agent_name, {"correctness": [...], "helpfulness": [...]})
     """
-    from strands_evals import StrandsEvalsTelemetry  # noqa: E402
-    from strands_evals.mappers import StrandsInMemorySessionMapper  # noqa: E402
-    from strands_evals.evaluators import CorrectnessEvaluator, HelpfulnessEvaluator  # noqa: E402
-    from strands_evals.types.evaluation import EvaluationData  # noqa: E402
+    from strands_evals import StrandsEvalsTelemetry
+    from strands_evals.mappers import StrandsInMemorySessionMapper
+    from strands_evals.evaluators import CorrectnessEvaluator, HelpfulnessEvaluator
+    from strands_evals.types.evaluation import EvaluationData
 
+    name = agent_data["name"]
+    model_key = agent_data["model_key"]
+
+    # Each thread gets its own telemetry pipeline
     telemetry = StrandsEvalsTelemetry()
     telemetry.setup_in_memory_exporter()
     mapper = StrandsInMemorySessionMapper()
     correctness_eval = CorrectnessEvaluator()
     helpfulness_eval = HelpfulnessEvaluator()
 
+    agent = create_agent(model_key)
+    agent_scores = {"correctness": [], "helpfulness": []}
+
+    for i, prompt in enumerate(prompts, 1):
+        try:
+            telemetry.in_memory_exporter.clear()
+        except Exception:
+            pass
+
+        response = agent(prompt)
+        spans = list(telemetry.in_memory_exporter.get_finished_spans())
+        session = None
+        if spans:
+            session = mapper.map_to_session(spans, session_id=f"eval-{name}-{i}")
+
+        correctness = None
+        helpfulness = None
+
+        # Correctness vs baseline
+        if session and baseline_responses[i - 1]:
+            try:
+                ed = EvaluationData(
+                    input=prompt,
+                    actual_trajectory=session,
+                    expected_assertion=baseline_responses[i - 1],
+                )
+                res = correctness_eval.evaluate(ed)
+                if res:
+                    correctness = res[0].score
+            except Exception as e:
+                print(f"    [WARN] {name} correctness prompt {i}: {e}")
+
+        # Helpfulness (absolute)
+        if session:
+            try:
+                ed = EvaluationData(input=prompt, actual_trajectory=session)
+                res = helpfulness_eval.evaluate(ed)
+                if res:
+                    helpfulness = res[0].score
+            except Exception as e:
+                print(f"    [WARN] {name} helpfulness prompt {i}: {e}")
+
+        agent_scores["correctness"].append(correctness)
+        agent_scores["helpfulness"].append(helpfulness)
+
+        c_str = "✓" if correctness == 1.0 else "✗" if correctness == 0.0 else str(correctness)
+        print(f"    {name} prompt {i}/5: correctness={c_str}, helpfulness={helpfulness}")
+
+        try:
+            telemetry.in_memory_exporter.clear()
+        except Exception:
+            pass
+
+    return name, agent_scores
+
+
+def run_evaluation(all_agent_results: list[dict]) -> dict:
+    """
+    Run in-memory evaluation for all agents.
+
+    Uses Sonnet (managed) as baseline for correctness comparison.
+    Evaluates all contender agents IN PARALLEL with ThreadPoolExecutor.
+    """
+    from strands_evals import StrandsEvalsTelemetry  # noqa: E402
+    from strands_evals.mappers import StrandsInMemorySessionMapper  # noqa: E402
+    from strands_evals.evaluators import HelpfulnessEvaluator  # noqa: E402
+    from strands_evals.types.evaluation import EvaluationData  # noqa: E402
+
     eval_results = {}
 
-    # First, run baseline (sonnet managed) in-memory to get ground-truth responses
+    # First, run baseline (sonnet) in-memory to get ground-truth responses (sequential)
     print("\n  [EVAL] Running baseline (sonnet) in-memory for ground-truth...")
+    telemetry = StrandsEvalsTelemetry()
+    telemetry.setup_in_memory_exporter()
+    mapper = StrandsInMemorySessionMapper()
+    helpfulness_eval = HelpfulnessEvaluator()
+
     baseline_agent = create_agent("sonnet")
     baseline_responses = []
-    baseline_sessions = []
     baseline_helpfulness = []
 
     for i, prompt in enumerate(PROMPTS, 1):
@@ -342,7 +418,6 @@ def run_evaluation(all_agent_results: list[dict]) -> dict:
         session = None
         if spans:
             session = mapper.map_to_session(spans, session_id=f"eval-baseline-{i}")
-        baseline_sessions.append(session)
 
         # Evaluate helpfulness
         score = None
@@ -367,66 +442,37 @@ def run_evaluation(all_agent_results: list[dict]) -> dict:
         "helpfulness": baseline_helpfulness,
     }
 
-    # Now evaluate each agent (contenders) against baseline
-    for agent_data in all_agent_results:
-        name = agent_data["name"]
-        model_key = agent_data["model_key"]
-        print(f"\n  [EVAL] Evaluating {name} against baseline...")
+    # Now evaluate ALL contender agents in PARALLEL
+    print(f"\n  [EVAL] Evaluating {len(all_agent_results)} agents against baseline (PARALLEL)...")
+    eval_start = time.time()
 
-        agent = create_agent(model_key)
-        agent_scores = {"correctness": [], "helpfulness": []}
+    with ThreadPoolExecutor(max_workers=len(all_agent_results)) as executor:
+        futures = {}
+        for agent_data in all_agent_results:
+            f = executor.submit(
+                _evaluate_single_agent,
+                agent_data,
+                baseline_responses,
+                PROMPTS,
+            )
+            futures[f] = agent_data["name"]
 
-        for i, prompt in enumerate(PROMPTS, 1):
+        for future in as_completed(futures):
+            name = futures[future]
             try:
-                telemetry.in_memory_exporter.clear()
-            except Exception:
-                pass
+                agent_name, scores = future.result()
+                eval_results[agent_name] = scores
+                avg_c = _avg(scores.get("correctness", []))
+                avg_h = _avg(scores.get("helpfulness", []))
+                c_str = f"{avg_c:.3f}" if avg_c is not None else "N/A"
+                h_str = f"{avg_h:.3f}" if avg_h is not None else "N/A"
+                print(f"  ✅ {agent_name}: correctness={c_str}, helpfulness={h_str}")
+            except Exception as e:
+                print(f"  ❌ {name}: EVAL FAILED — {e}")
+                eval_results[name] = {"correctness": [None] * 5, "helpfulness": [None] * 5}
 
-            response = agent(prompt)
-            spans = list(telemetry.in_memory_exporter.get_finished_spans())
-            session = None
-            if spans:
-                session = mapper.map_to_session(spans, session_id=f"eval-{name}-{i}")
-
-            correctness = None
-            helpfulness = None
-
-            # Correctness vs baseline
-            if session and baseline_responses[i - 1]:
-                try:
-                    ed = EvaluationData(
-                        input=prompt,
-                        actual_trajectory=session,
-                        expected_assertion=baseline_responses[i - 1],
-                    )
-                    res = correctness_eval.evaluate(ed)
-                    if res:
-                        correctness = res[0].score
-                except Exception as e:
-                    print(f"    [WARN] Correctness: {e}")
-
-            # Helpfulness (absolute)
-            if session:
-                try:
-                    ed = EvaluationData(input=prompt, actual_trajectory=session)
-                    res = helpfulness_eval.evaluate(ed)
-                    if res:
-                        helpfulness = res[0].score
-                except Exception as e:
-                    print(f"    [WARN] Helpfulness: {e}")
-
-            agent_scores["correctness"].append(correctness)
-            agent_scores["helpfulness"].append(helpfulness)
-
-            c_str = "✓" if correctness == 1.0 else "✗" if correctness == 0.0 else str(correctness)
-            print(f"    {name} prompt {i}/5: correctness={c_str}, helpfulness={helpfulness}")
-
-            try:
-                telemetry.in_memory_exporter.clear()
-            except Exception:
-                pass
-
-        eval_results[name] = agent_scores
+    eval_duration = time.time() - eval_start
+    print(f"\n  Parallel evaluation complete ({eval_duration:.1f}s for {len(all_agent_results)} agents)")
 
     return eval_results
 

@@ -3,20 +3,20 @@
     "default": {
       "resources": {
         "runtimes": {
-          "multiplier_hr_haiku": {
-            "runtimeId": "eddpoc_multiplier_hr_haiku-wk8syoBJ4A",
-            "runtimeArn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:runtime/eddpoc_multiplier_hr_haiku-wk8syoBJ4A",
-            "roleArn": "arn:aws:iam::654654616949:role/AgentCore-eddpoc-default-ApplicationAgentMultiplier-hAcu8as1ES7u"
-          },
-          "multiplier_hr_nova_pro": {
-            "runtimeId": "eddpoc_multiplier_hr_nova_pro-QiyzlhFfQm",
-            "runtimeArn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:runtime/eddpoc_multiplier_hr_nova_pro-QiyzlhFfQm",
-            "roleArn": "arn:aws:iam::654654616949:role/AgentCore-eddpoc-default-ApplicationAgentMultiplier-aLGWudzQoJcJ"
-          },
           "multiplier_hr_sonnet": {
             "runtimeId": "eddpoc_multiplier_hr_sonnet-5YhsT625tI",
             "runtimeArn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:runtime/eddpoc_multiplier_hr_sonnet-5YhsT625tI",
             "roleArn": "arn:aws:iam::654654616949:role/AgentCore-eddpoc-default-ApplicationAgentMultiplier-6PYwTc6KMIRd"
+          },
+          "multiplier_hr_glm_5": {
+            "runtimeId": "eddpoc_multiplier_hr_glm_5-SbMYgjFojx",
+            "runtimeArn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:runtime/eddpoc_multiplier_hr_glm_5-SbMYgjFojx",
+            "roleArn": "arn:aws:iam::654654616949:role/AgentCore-eddpoc-default-ApplicationAgentMultiplier-st4CsWqZpvvm"
+          },
+          "multiplier_hr_nova_2_pro": {
+            "runtimeId": "eddpoc_multiplier_hr_nova_2_pro-w5d1Pu9Uv4",
+            "runtimeArn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:runtime/eddpoc_multiplier_hr_nova_2_pro-w5d1Pu9Uv4",
+            "roleArn": "arn:aws:iam::654654616949:role/AgentCore-eddpoc-default-ApplicationAgentMultiplier-YMYCkO6TxZ39"
           }
         },
         "evaluators": {
@@ -31,15 +31,15 @@
             "onlineEvaluationConfigArn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:online-evaluation-config/eddpoc_eval_sonnet-D6R6FHCa6w",
             "agent": "multiplier_hr_sonnet"
           },
-          "eval_haiku": {
-            "onlineEvaluationConfigId": "eddpoc_eval_haiku-cnl6GB8JiP",
-            "onlineEvaluationConfigArn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:online-evaluation-config/eddpoc_eval_haiku-cnl6GB8JiP",
-            "agent": "multiplier_hr_haiku"
+          "eval_nova_2_pro": {
+            "onlineEvaluationConfigId": "eddpoc_eval_nova_2_pro-taaTtC7VN4",
+            "onlineEvaluationConfigArn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:online-evaluation-config/eddpoc_eval_nova_2_pro-taaTtC7VN4",
+            "agent": "multiplier_hr_nova_2_pro"
           },
-          "eval_nova_pro": {
-            "onlineEvaluationConfigId": "eddpoc_eval_nova_pro-3rGRS08vdI",
-            "onlineEvaluationConfigArn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:online-evaluation-config/eddpoc_eval_nova_pro-3rGRS08vdI",
-            "agent": "multiplier_hr_nova_pro"
+          "eval_glm_5": {
+            "onlineEvaluationConfigId": "eddpoc_eval_glm_5-eBX7lw3Kpg",
+            "onlineEvaluationConfigArn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:online-evaluation-config/eddpoc_eval_glm_5-eBX7lw3Kpg",
+            "agent": "multiplier_hr_glm_5"
           }
         },
         "stackName": "AgentCore-eddpoc-default"

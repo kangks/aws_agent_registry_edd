@@ -78,6 +78,9 @@ async function main() {
       tags: {
         'agentcore:project-name': spec.name,
         'agentcore:target-name': target.name,
+        'app': 'multiplier-hr-agent',
+        'project': spec.name,
+        'env': 'dev',
       },
     });
   }

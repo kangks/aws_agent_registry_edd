@@ -30,7 +30,7 @@ def main():
         "--model",
         type=str,
         default="sonnet",
-        choices=["sonnet", "haiku", "nova_pro"],
+        choices=["sonnet", "nova_2_pro", "glm_5"],
         help="Model key to use (default: sonnet)",
     )
     parser.add_argument(
