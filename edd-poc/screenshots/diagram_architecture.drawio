@@ -1,0 +1,103 @@
+<mxfile host="65bd71144e">
+    <diagram name="EDD Architecture" id="edd-arch-001">
+        <mxGraphModel dx="808" dy="595" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="title" value="Evaluation-Driven Development (EDD) with Amazon Bedrock AgentCore" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=20;fontStyle=1;fontColor=#232F3E;" parent="1" vertex="1">
+                    <mxGeometry x="200" y="10" width="1000" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="agent-code" value="&lt;b&gt;Agent Code&lt;/b&gt;&#10;(Strands Agents SDK)&#10;&#10;• employee_lookup&#10;• compliance_checker&#10;• payroll_calculator&#10;• leave_manager" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;verticalAlign=top;spacingLeft=10;spacingTop=5;fontSize=11;fontColor=#050505;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="120" width="180" height="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="models" value="&lt;b&gt;Foundation Models&lt;/b&gt;&#10;&#10;Claude Sonnet 4&#10;Claude Haiku 4.5&#10;Amazon Nova Pro" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=left;verticalAlign=top;spacingLeft=10;spacingTop=5;fontSize=11;fontColor=#050505;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="300" width="180" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="managed-container" value="Managed Path (AgentCore Runtime)" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=;horizontal=1;startSize=30;fillColor=#E8F5E9;strokeColor=#82b366;fontSize=12;rounded=1;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="280" y="80" width="400" height="200" as="geometry"/>
+                </mxCell>
+                <mxCell id="managed-runtime" value="&lt;b&gt;AgentCore Runtime&lt;/b&gt;&#10;(Python 3.11, zero infra)&#10;&#10;multiplier_hr_sonnet&#10;multiplier_hr_haiku&#10;multiplier_hr_nova_pro" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;verticalAlign=top;spacingLeft=8;spacingTop=5;fontSize=10;fontColor=#050505;" parent="managed-container" vertex="1">
+                    <mxGeometry x="20" y="40" width="170" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="managed-otel" value="&lt;b&gt;OTEL Sidecar&lt;/b&gt;&#10;(Automatic)&#10;&#10;Traces exported&#10;automatically" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;verticalAlign=top;spacingLeft=8;spacingTop=5;fontSize=10;fontColor=#050505;" parent="managed-container" vertex="1">
+                    <mxGeometry x="210" y="40" width="170" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="byo-container" value="BYO Path (ADOT → CloudWatch)" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=;horizontal=1;startSize=30;fillColor=#E3F2FD;strokeColor=#6c8ebf;fontSize=12;rounded=1;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="280" y="310" width="400" height="200" as="geometry"/>
+                </mxCell>
+                <mxCell id="byo-agent" value="&lt;b&gt;BYO Agent Runner&lt;/b&gt;&#10;(Your compute)&#10;&#10;multiplier-byo-sonnet&#10;multiplier-byo-haiku&#10;multiplier-byo-nova-pro" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;verticalAlign=top;spacingLeft=8;spacingTop=5;fontSize=10;fontColor=#050505;" parent="byo-container" vertex="1">
+                    <mxGeometry x="20" y="40" width="170" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="byo-adot" value="&lt;b&gt;ADOT Instrumentation&lt;/b&gt;&#10;(opentelemetry-instrument)&#10;&#10;aws_distro&#10;aws_configurator&#10;http/protobuf" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;verticalAlign=top;spacingLeft=8;spacingTop=5;fontSize=10;fontColor=#050505;" parent="byo-container" vertex="1">
+                    <mxGeometry x="210" y="40" width="170" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="cloudwatch" value="&lt;b&gt;CloudWatch&lt;/b&gt;&#10;GenAI Observability&#10;&#10;• Traces &amp;amp; Spans&#10;• Token Usage&#10;• Latency Metrics&#10;• Error Rates" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;align=left;verticalAlign=top;spacingLeft=10;spacingTop=5;fontSize=11;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="740" y="150" width="180" height="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="eval-container" value="Evaluation Engine" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=;horizontal=1;startSize=30;fillColor=#FFF3E0;strokeColor=#d79b00;fontSize=12;rounded=1;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="740" y="350" width="360" height="200" as="geometry"/>
+                </mxCell>
+                <mxCell id="eval-builtin" value="&lt;b&gt;Built-in Evaluators&lt;/b&gt;&#10;Helpfulness&#10;Faithfulness&#10;Coherence&#10;Correctness" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;align=left;verticalAlign=top;spacingLeft=8;spacingTop=5;fontSize=10;fontColor=#000000;" parent="eval-container" vertex="1">
+                    <mxGeometry x="10" y="40" width="160" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="eval-custom" value="&lt;b&gt;Custom Evaluators&lt;/b&gt;&#10;LLM-as-a-Judge&#10;(domain_accuracy)&#10;Lambda Evaluator&#10;(deterministic)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;align=left;verticalAlign=top;spacingLeft=8;spacingTop=5;fontSize=10;fontColor=#000000;" parent="eval-container" vertex="1">
+                    <mxGeometry x="185" y="40" width="160" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="eval-online" value="Online Eval: 100% sampling, auto-score every invocation" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=10;fontColor=#000000;" parent="eval-container" vertex="1">
+                    <mxGeometry x="10" y="150" width="335" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="registry" value="&lt;b&gt;Agent Registry&lt;/b&gt;&#10;&#10;6 agents cataloged&#10;Eval scores &amp;amp; history&#10;Stale detection&#10;AWS Registry (cloud)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#f8cecc;strokeColor=#b85450;align=left;verticalAlign=middle;spacingLeft=10;fontSize=11;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="1160" y="180" width="180" height="130" as="geometry"/>
+                </mxCell>
+                <mxCell id="results" value="&lt;b&gt;Results &amp;amp; Comparison&lt;/b&gt;&#10;&#10;• Correctness scores&#10;• Helpfulness scores&#10;• Cost analysis&#10;• Model ranking" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;align=left;verticalAlign=top;spacingLeft=10;spacingTop=5;fontSize=11;fontColor=#000000;" parent="1" vertex="1">
+                    <mxGeometry x="1160" y="370" width="180" height="130" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow1" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#82b366;" parent="1" source="agent-code" target="managed-container" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow2" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#6c8ebf;" parent="1" source="agent-code" target="byo-container" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow3" value="Traces" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#9673a6;" parent="1" source="managed-container" target="cloudwatch" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow4" value="Traces" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#9673a6;" parent="1" source="byo-container" target="cloudwatch" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow5" value="Score" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#d79b00;" parent="1" source="cloudwatch" target="eval-container" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow6" value="Update" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#b85450;" parent="1" source="eval-container" target="registry" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow7" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#666666;" parent="1" source="eval-container" target="results" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow8" value="" style="endArrow=classic;html=1;rounded=0;strokeWidth=1;strokeColor=#d6b656;dashed=1;" parent="1" source="models" target="agent-code" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-title" value="&lt;b&gt;Legend&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="560" width="60" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend1" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#82b366;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="585" width="20" height="15" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend1-text" value="Managed (AgentCore Runtime)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="65" y="583" width="180" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend2" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#6c8ebf;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="605" width="20" height="15" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend2-text" value="BYO (ADOT → CloudWatch)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="65" y="603" width="180" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend3" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#d79b00;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="625" width="20" height="15" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend3-text" value="Evaluation Engine" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" parent="1" vertex="1">
+                    <mxGeometry x="65" y="623" width="180" height="20" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
