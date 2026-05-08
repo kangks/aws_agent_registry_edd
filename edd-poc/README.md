@@ -638,7 +638,12 @@ edd-poc/
 ├── agents/
 │   ├── agent.py              # 4 tools + create_agent() factory
 │   ├── runtime_agent.py      # AgentCore Runtime entry point
+│   ├── byo_runner.py         # BYO agent runner (ADOT instrumentation)
 │   └── local_runner.py       # CLI runner with OTEL
+├── registry/
+│   ├── __init__.py           # Registry module exports
+│   ├── agent_registry.py     # Registry API (get_all_agents, update_eval_results, etc.)
+│   └── registry.json         # Agent catalog with eval history (6 agents)
 ├── assets/
 │   ├── architecture.drawio   # Editable architecture diagram source
 │   └── architecture.png      # Exported diagram (for README)
@@ -648,10 +653,12 @@ edd-poc/
 ├── scripts/
 │   ├── run_and_compare.py    # Run all models + compare + trace capture
 │   ├── run_multi_turn.py     # Multi-turn evaluation with ActorSimulator
+│   ├── run_registry_comparison.py  # Async 6-agent comparison (managed + BYO)
 │   └── cost_performance_analysis.py  # Cost/quality analysis
 ├── results/                  # Generated at runtime (not committed)
 │   ├── comparison.md         # Single-turn comparison output
 │   ├── multi_turn_comparison.md  # Multi-turn evaluation results
+│   ├── registry_comparison.md    # 6-agent registry comparison
 │   ├── cost_performance_analysis.md  # Cost analysis
 │   └── traces/               # Per-model per-prompt trace files
 │       ├── {model}_prompt_{n}.json   # Raw trace data
@@ -681,6 +688,116 @@ edd-poc/
 | **ActorSimulator** | Strands Evals component that simulates users for multi-turn testing |
 | **InMemorySpanExporter** | OTEL exporter that captures spans in-process (no external collector needed) |
 | **StrandsInMemorySessionMapper** | Maps raw OTEL spans into structured agent sessions |
+
+---
+
+## Agent Registry
+
+The Agent Registry (`registry/`) is the unified catalog of all agents in the EDD system. It tracks both managed (AgentCore Runtime) and BYO (ADOT) agents with their evaluation history.
+
+### What It Does
+
+- **Queries AgentCore** `list_agent_runtimes` for managed agent metadata (ARN, status, version)
+- **Maintains local state** in `registry.json` for BYO agents and eval scores
+- **Tracks evaluation history** — last score, timestamp, evaluator used per agent
+- **Detects stale agents** — identifies agents not evaluated in N days for scheduled re-evaluation
+
+### API
+
+```python
+from registry import get_all_agents, get_agent, update_eval_results, get_stale_agents
+
+# Get all 6 agents (managed + BYO) with metadata
+agents = get_all_agents()
+
+# Get a single agent
+agent = get_agent("multiplier_hr_sonnet")
+
+# Update after evaluation
+update_eval_results("multiplier_hr_haiku", {"correctness": 1.0, "helpfulness": 1.0}, timestamp, "registry_comparison")
+
+# Find agents needing re-evaluation
+stale = get_stale_agents(days=7)
+```
+
+### Running the 6-Agent Comparison
+
+```bash
+AWS_PROFILE=ml-sandbox AWS_REGION=us-east-1 \
+  .venv/bin/python scripts/run_registry_comparison.py
+```
+
+This runs all 6 agents concurrently (ThreadPoolExecutor, max_workers=6), evaluates against Sonnet baseline, and updates the registry with scores.
+
+### AWS Agent Registry (Cloud-Side)
+
+In addition to the local registry, agents are registered in the **AWS Agent Registry** (`bedrock-agentcore-control` API). This provides a durable, centralized catalog with approval workflows.
+
+**Registry:** `Rqbs73eeqpMEEwf9` (ARN: `arn:aws:bedrock-agentcore:us-east-1:654654616949:registry/Rqbs73eeqpMEEwf9`)
+
+**Records:** 6 CUSTOM records, each storing agent metadata + eval scores in `descriptors.custom.inlineContent`
+
+```bash
+# Register agents (one-time setup)
+AWS_PROFILE=ml-sandbox AWS_REGION=us-east-1 \
+  .venv/bin/python scripts/setup_registry.py
+```
+
+After each comparison run, `run_registry_comparison.py` automatically updates the AWS registry records with the latest eval scores. This creates an audit trail of agent quality over time.
+
+**Record lifecycle:** CREATING → DRAFT → PENDING_APPROVAL → APPROVED → (updated with scores after each eval run)
+
+---
+
+## Unified CloudWatch Vision
+
+The ideal architecture for EDD is a single observability plane where all agents — regardless of deployment type — are evaluated by the same evaluator:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Agent Registry                             │
+│  6 agents: 3 managed + 3 BYO, all with eval history          │
+└─────────────────────┬───────────────────────┬───────────────┘
+                      │                       │
+         ┌────────────▼────────────┐  ┌──────▼──────────────┐
+         │   Managed Agents (3)     │  │   BYO Agents (3)    │
+         │   AgentCore Runtime      │  │   ADOT → CloudWatch │
+         └────────────┬────────────┘  └──────┬──────────────┘
+                      │                       │
+         ┌────────────▼───────────────────────▼───────────────┐
+         │              CloudWatch GenAI Observability          │
+         │              (traces from BOTH paths)                │
+         └────────────────────────┬───────────────────────────┘
+                                  │
+         ┌────────────────────────▼───────────────────────────┐
+         │         Single Evaluator (multiplier_domain_accuracy)│
+         │         Scores ALL traces uniformly (1-5 scale)      │
+         └────────────────────────────────────────────────────┘
+```
+
+In this vision, both managed and BYO traces flow to CloudWatch, and a single evaluator scores them all — giving you one source of truth for agent quality regardless of deployment path.
+
+### Current Limitations
+
+Today, this unified vision has gaps:
+
+| Limitation | Impact | Workaround |
+|-----------|--------|------------|
+| `agentcore run eval` only discovers managed runtime traces | BYO traces visible in X-Ray but not scorable by AgentCore evaluator | Use local SDK evaluation (`strands-agents-evals`) for BYO scoring |
+| BYO traces lack runtime ARN linkage | Evaluator can't correlate BYO traces to a registered agent | Registry maintains the mapping locally |
+| No cross-path comparison in CloudWatch | Can't compare managed vs BYO scores in a single dashboard | `scripts/run_registry_comparison.py` does this locally |
+| Online eval configs only work with managed runtimes | BYO agents can't auto-score on every invocation | Scheduled cron + `get_stale_agents()` for periodic evaluation |
+
+### Future Direction
+
+When AWS adds BYO trace discovery to AgentCore evaluators, the architecture simplifies dramatically:
+
+1. **One evaluator** — `multiplier_domain_accuracy` scores both managed and BYO traces
+2. **One source of truth** — CloudWatch GenAI Observability dashboard shows all agents
+3. **One registry** — AgentCore's own agent list replaces local `registry.json`
+4. **Online eval for all** — Auto-scoring on every invocation, regardless of deployment type
+
+Until then, the Agent Registry + local SDK evaluation provides the same capability with slightly more moving parts.
 
 ---
 

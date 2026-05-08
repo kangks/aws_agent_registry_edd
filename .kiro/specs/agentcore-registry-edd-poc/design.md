@@ -655,6 +655,136 @@ The `--expected-response` flag passes Sonnet's response as context to the evalua
 
 ---
 
+### Agent Registry Architecture
+
+The Agent Registry serves as the catalog of all agents in the EDD system. It combines:
+1. **AgentCore Runtime list** — managed agents with ARN, version, status (source of truth for managed)
+2. **Local registry.json** — augments with BYO agents, eval scores, timestamps, ownership
+
+#### Registry Schema
+
+```json
+{
+  "agents": [
+    {
+      "name": "multiplier_hr_sonnet",
+      "model": "us.anthropic.claude-sonnet-4-6",
+      "deployment_type": "managed",
+      "runtime_id": "eddpoc_multiplier_hr_sonnet-5YhsT625tI",
+      "service_name": "multiplier_hr_sonnet.DEFAULT",
+      "owner": "edd-poc",
+      "description": "HR/Compliance agent - Sonnet 4 (managed runtime)",
+      "last_eval_score": {"helpfulness": 1.0, "role": "baseline"},
+      "last_eval_timestamp": "2026-05-07T13:54:26+00:00",
+      "last_eval_evaluator": "registry_comparison",
+      "tags": ["managed", "sonnet", "baseline"]
+    }
+  ],
+  "metadata": {
+    "project": "eddpoc",
+    "region": "us-east-1",
+    "account": "654654616949",
+    "evaluator": "multiplier_domain_accuracy",
+    "baseline_model": "sonnet"
+  }
+}
+```
+
+#### Evaluation Triggers
+- **Code pipeline change** — PR merged triggers eval for affected agents
+- **Periodic/scheduled** — Cron evaluates agents not touched in N days (`get_stale_agents(days=7)`)
+- **Manual** — Developer runs comparison on demand (`scripts/run_registry_comparison.py`)
+
+#### Async Execution
+All 6 agents (3 managed + 3 BYO) run concurrently using ThreadPoolExecutor.
+Each agent runs 5 prompts sequentially to avoid per-model throttling.
+Total: 30 invocations, ~2 minutes wall clock time.
+
+```
+ThreadPoolExecutor(max_workers=6)
+├── multiplier_hr_sonnet     (managed) → 5 prompts sequential
+├── multiplier_hr_haiku      (managed) → 5 prompts sequential
+├── multiplier_hr_nova_pro   (managed) → 5 prompts sequential
+├── multiplier_byo_sonnet    (BYO/ADOT) → 5 prompts sequential
+├── multiplier_byo_haiku     (BYO/ADOT) → 5 prompts sequential
+└── multiplier_byo_nova_pro  (BYO/ADOT) → 5 prompts sequential
+```
+
+After invocations complete, Phase 2 runs in-memory evaluation sequentially:
+- Sonnet responses = ground truth (baseline)
+- All other agents evaluated with CorrectnessEvaluator + HelpfulnessEvaluator
+- Registry updated with scores and timestamps
+
+---
+
+### AWS Agent Registry Integration
+
+In addition to the local `registry.json`, the EDD system integrates with the **AWS Agent Registry** (`bedrock-agentcore-control` API) as the cloud-side catalog of agents. This provides a durable, centralized record of all agents and their evaluation history.
+
+#### Registry Details
+
+- **Registry ID:** `Rqbs73eeqpMEEwf9`
+- **ARN:** `arn:aws:bedrock-agentcore:us-east-1:654654616949:registry/Rqbs73eeqpMEEwf9`
+- **Records:** 6 (3 managed + 3 BYO), all CUSTOM type
+
+#### How EDD Uses the Registry
+
+1. **Registration:** `scripts/setup_registry.py` creates 6 CUSTOM records with agent metadata (model_id, deployment_path, tools, service_name)
+2. **Approval workflow:** Records go through CREATING → DRAFT → PENDING_APPROVAL → APPROVED
+3. **Score storage:** After each evaluation run, `run_registry_comparison.py` updates each record's custom metadata with `last_eval_score`, `last_eval_date`, and `last_eval_details`
+4. **Discovery:** The comparison script reads from the registry at startup (`list_registry_records`) to confirm all agents are registered
+
+#### API Usage Pattern
+
+```python
+# Create record
+client.create_registry_record(
+    registryId='Rqbs73eeqpMEEwf9',
+    name='multiplier-hr-sonnet-managed',
+    descriptorType='CUSTOM',
+    descriptors={'custom': {'inlineContent': json.dumps(metadata)}},
+    recordVersion='1.0.0',
+)
+
+# Update with eval scores (note: update API uses optionalValue wrapper)
+client.update_registry_record(
+    registryId='Rqbs73eeqpMEEwf9',
+    recordId=record_id,
+    descriptorType='CUSTOM',
+    descriptors={'optionalValue': {'custom': {'optionalValue': {'inlineContent': json.dumps(updated_metadata)}}}},
+)
+```
+
+#### Record Metadata Schema
+
+```json
+{
+  "agent_name": "multiplier-hr-sonnet-managed",
+  "model_id": "us.anthropic.claude-sonnet-4-6",
+  "model_key": "sonnet",
+  "deployment_path": "managed",
+  "service_name": "eddpoc_multiplier_hr_sonnet.DEFAULT",
+  "tools": ["employee_lookup", "compliance_checker", "payroll_calculator", "leave_manager"],
+  "last_eval_score": {"helpfulness": 1.0, "role": "baseline"},
+  "last_eval_date": "2026-05-07T23:10:00Z",
+  "last_eval_details": {
+    "evaluator": "registry_comparison",
+    "prompts_count": 5,
+    "baseline_model": "sonnet"
+  }
+}
+```
+
+#### Dual Registry Architecture
+
+The system maintains two registries in sync:
+- **AWS Agent Registry** — durable cloud storage, accessible via API, supports approval workflows
+- **Local registry.json** — fast local access, enriched with live runtime status, used by scripts
+
+Both are updated after each evaluation run. The local registry is the primary source for script execution (faster reads), while the AWS registry provides the audit trail and cross-team visibility.
+
+---
+
 ## Error Handling
 
 | Condition | Handling |

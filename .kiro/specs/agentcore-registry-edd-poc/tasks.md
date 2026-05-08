@@ -203,11 +203,39 @@ Minimum viable POC demonstrating AgentCore custom evaluators and observability f
     - Added "Ground Truth vs Contender Comparison Pattern" section to design.md
     - Results saved to results/groundtruth_comparison.md and results/managed_groundtruth_comparison.md
 
+- [x] 16. Implement Agent Registry with async comparison
+  - [x] 16.1 Create registry module (registry/agent_registry.py + registry.json)
+    - Agent registry queries AgentCore list_agent_runtimes for managed agents
+    - Local registry.json augments with BYO agents, eval scores, timestamps
+    - Functions: get_all_agents(), get_agent(), update_eval_results(), get_stale_agents()
+  - [x] 16.2 Create async comparison script (scripts/run_registry_comparison.py)
+    - ThreadPoolExecutor(max_workers=6) runs all 6 agents concurrently
+    - Each agent runs 5 prompts sequentially (5s delay to avoid throttling)
+    - Phase 2: in-memory evaluation with CorrectnessEvaluator + HelpfulnessEvaluator
+    - Updates registry.json with scores after evaluation
+  - [x] 16.3 Run end-to-end with all 6 agents concurrently
+    - Phase 1: 30/30 invocations successful in ~117s wall clock time
+    - Phase 2: Sonnet baseline helpfulness=1.000, Haiku correctness=1.000, Nova Pro correctness=0.667
+    - Registry updated with scores and timestamps
+  - [x] 16.4 Verify registry updated with eval scores after run
+    - All 6 agents in registry.json have last_eval_score, last_eval_timestamp, last_eval_evaluator
+    - Report generated: results/registry_comparison.md
+  - [x] 16.5 Integrate AWS Agent Registry (bedrock-agentcore-control API)
+    - Created registry Rqbs73eeqpMEEwf9 with 6 CUSTOM records (3 managed + 3 BYO)
+    - Each record stores agent metadata: model_id, deployment_path, tools, service_name
+    - Approval workflow: CREATING → DRAFT → PENDING_APPROVAL → APPROVED
+    - scripts/setup_registry.py handles full lifecycle
+  - [x] 16.6 Update registry records with eval scores after comparison
+    - run_registry_comparison.py reads from AWS registry at startup (list_registry_records)
+    - After evaluation, updates each record's custom metadata with scores via update_registry_record
+    - Dual registry: AWS (durable, audit trail) + local registry.json (fast access)
+    - Verified: all 6 records contain last_eval_score, last_eval_date, last_eval_details
+
 ## Notes
 
 - 3 models (not 5) — enough to show the comparison pattern without burning time/tokens on Opus and Nova Lite
 - 5 hardcoded prompts in the comparison script — no separate dataset file needed
-- No registry, no governance workflows, no MCP endpoint
+- No governance workflows, no MCP endpoint
 - No CloudWatch dashboard, no alarms, no online evaluation — those are Week 2 polish
 - No property-based tests — this is a demo, not a production system
 - The entire POC should be readable in 30 minutes and runnable in under an hour (given AWS access)

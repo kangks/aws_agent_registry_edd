@@ -1,0 +1,131 @@
+{
+  "agents": [
+    {
+      "name": "multiplier_hr_sonnet",
+      "model": "us.anthropic.claude-sonnet-4-6",
+      "deployment_type": "managed",
+      "runtime_id": "eddpoc_multiplier_hr_sonnet-5YhsT625tI",
+      "service_name": "multiplier_hr_sonnet.DEFAULT",
+      "owner": "edd-poc",
+      "description": "HR/Compliance agent - Sonnet 4 (managed runtime)",
+      "last_eval_score": {
+        "correctness": 1.0,
+        "helpfulness": 1.0
+      },
+      "last_eval_timestamp": "2026-05-07T23:12:56.633075+00:00",
+      "last_eval_evaluator": "registry_comparison",
+      "tags": [
+        "managed",
+        "sonnet",
+        "baseline"
+      ]
+    },
+    {
+      "name": "multiplier_hr_haiku",
+      "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "deployment_type": "managed",
+      "runtime_id": "eddpoc_multiplier_hr_haiku-wk8syoBJ4A",
+      "service_name": "multiplier_hr_haiku.DEFAULT",
+      "owner": "edd-poc",
+      "description": "HR/Compliance agent - Haiku 4.5 (managed runtime)",
+      "last_eval_score": {
+        "correctness": 0.6,
+        "helpfulness": 0.733
+      },
+      "last_eval_timestamp": "2026-05-07T23:12:56.633075+00:00",
+      "last_eval_evaluator": "registry_comparison",
+      "tags": [
+        "managed",
+        "haiku",
+        "contender"
+      ]
+    },
+    {
+      "name": "multiplier_hr_nova_pro",
+      "model": "us.amazon.nova-pro-v1:0",
+      "deployment_type": "managed",
+      "runtime_id": "eddpoc_multiplier_hr_nova_pro-QiyzlhFfQm",
+      "service_name": "multiplier_hr_nova_pro.DEFAULT",
+      "owner": "edd-poc",
+      "description": "HR/Compliance agent - Nova Pro (managed runtime)",
+      "last_eval_score": {
+        "correctness": 0.8,
+        "helpfulness": 0.8
+      },
+      "last_eval_timestamp": "2026-05-07T23:12:56.633075+00:00",
+      "last_eval_evaluator": "registry_comparison",
+      "tags": [
+        "managed",
+        "nova_pro",
+        "contender"
+      ]
+    },
+    {
+      "name": "multiplier_byo_sonnet",
+      "model": "us.anthropic.claude-sonnet-4-6",
+      "deployment_type": "byo",
+      "runtime_id": null,
+      "service_name": "multiplier-byo-sonnet",
+      "owner": "edd-poc",
+      "description": "HR/Compliance agent - Sonnet 4 (BYO via ADOT)",
+      "last_eval_score": {
+        "correctness": 1.0,
+        "helpfulness": 1.0
+      },
+      "last_eval_timestamp": "2026-05-07T23:12:56.633075+00:00",
+      "last_eval_evaluator": "registry_comparison",
+      "tags": [
+        "byo",
+        "sonnet",
+        "baseline"
+      ]
+    },
+    {
+      "name": "multiplier_byo_haiku",
+      "model": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "deployment_type": "byo",
+      "runtime_id": null,
+      "service_name": "multiplier-byo-haiku",
+      "owner": "edd-poc",
+      "description": "HR/Compliance agent - Haiku 4.5 (BYO via ADOT)",
+      "last_eval_score": {
+        "correctness": 0.8,
+        "helpfulness": 0.833
+      },
+      "last_eval_timestamp": "2026-05-07T23:12:56.633075+00:00",
+      "last_eval_evaluator": "registry_comparison",
+      "tags": [
+        "byo",
+        "haiku",
+        "contender"
+      ]
+    },
+    {
+      "name": "multiplier_byo_nova_pro",
+      "model": "us.amazon.nova-pro-v1:0",
+      "deployment_type": "byo",
+      "runtime_id": null,
+      "service_name": "multiplier-byo-nova-pro",
+      "owner": "edd-poc",
+      "description": "HR/Compliance agent - Nova Pro (BYO via ADOT)",
+      "last_eval_score": {
+        "correctness": 0.8,
+        "helpfulness": 0.733
+      },
+      "last_eval_timestamp": "2026-05-07T23:12:56.633075+00:00",
+      "last_eval_evaluator": "registry_comparison",
+      "tags": [
+        "byo",
+        "nova_pro",
+        "contender"
+      ]
+    }
+  ],
+  "metadata": {
+    "project": "eddpoc",
+    "region": "us-east-1",
+    "account": "654654616949",
+    "evaluator": "multiplier_domain_accuracy",
+    "baseline_model": "sonnet"
+  }
+}

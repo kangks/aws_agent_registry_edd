@@ -1,0 +1,54 @@
+{
+  "registry_id": "Rqbs73eeqpMEEwf9",
+  "registry_arn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:registry/Rqbs73eeqpMEEwf9",
+  "records": [
+    {
+      "name": "multiplier-hr-sonnet-managed",
+      "record_id": "IIHUALNPB4ti",
+      "record_arn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:registry/Rqbs73eeqpMEEwf9/record/IIHUALNPB4ti",
+      "model_key": "sonnet",
+      "deployment_path": "managed",
+      "service_name": "eddpoc_multiplier_hr_sonnet.DEFAULT"
+    },
+    {
+      "name": "multiplier-hr-haiku-managed",
+      "record_id": "PYJU0fHKmqx9",
+      "record_arn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:registry/Rqbs73eeqpMEEwf9/record/PYJU0fHKmqx9",
+      "model_key": "haiku",
+      "deployment_path": "managed",
+      "service_name": "eddpoc_multiplier_hr_haiku.DEFAULT"
+    },
+    {
+      "name": "multiplier-hr-nova-pro-managed",
+      "record_id": "Sgu8Ht7bnAio",
+      "record_arn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:registry/Rqbs73eeqpMEEwf9/record/Sgu8Ht7bnAio",
+      "model_key": "nova_pro",
+      "deployment_path": "managed",
+      "service_name": "eddpoc_multiplier_hr_nova_pro.DEFAULT"
+    },
+    {
+      "name": "multiplier-hr-sonnet-byo",
+      "record_id": "NVZT4yXIin2z",
+      "record_arn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:registry/Rqbs73eeqpMEEwf9/record/NVZT4yXIin2z",
+      "model_key": "sonnet",
+      "deployment_path": "byo",
+      "service_name": "multiplier-byo-sonnet"
+    },
+    {
+      "name": "multiplier-hr-haiku-byo",
+      "record_id": "QblSAIwo6jIz",
+      "record_arn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:registry/Rqbs73eeqpMEEwf9/record/QblSAIwo6jIz",
+      "model_key": "haiku",
+      "deployment_path": "byo",
+      "service_name": "multiplier-byo-haiku"
+    },
+    {
+      "name": "multiplier-hr-nova-pro-byo",
+      "record_id": "rftxXF1RHpB9",
+      "record_arn": "arn:aws:bedrock-agentcore:us-east-1:654654616949:registry/Rqbs73eeqpMEEwf9/record/rftxXF1RHpB9",
+      "model_key": "nova_pro",
+      "deployment_path": "byo",
+      "service_name": "multiplier-byo-nova-pro"
+    }
+  ]
+}
