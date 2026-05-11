@@ -176,7 +176,7 @@ All AWS resources tagged `app=multiplier-hr-agent`, `project=eddpoc`, `env=dev`.
     - _Requirements: Out-of-scope per current spec_
   - [ ] 10.4 Update `registry/registry.json` and the AWS Agent Registry with trajectory scores
     - _Requirements: Out-of-scope per current spec_
-  - [ ] 10.5 Update `EDD_architecture.md` to replace references to the previous unified-eval diagram with the trajectory evaluator diagram
+  - [x] 10.5 Update `EDD_architecture.md` to replace references to the previous unified-eval diagram with the trajectory evaluator diagram
     - _Requirements: 5.7 (documentation)_
 
 ## Task Dependency Graph

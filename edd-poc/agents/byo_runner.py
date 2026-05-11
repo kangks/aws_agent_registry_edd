@@ -66,6 +66,12 @@ def main():
     from strands.telemetry.tracer import get_tracer
     get_tracer()
 
+    # Install the custom SpanProcessor that emits the invoke_agent log record.
+    # This bridges the gap between BYO agents and the AgentCore Evaluator's
+    # LLM-as-a-Judge path (which requires this log record to exist).
+    from invoke_agent_log_emitter import install as install_log_emitter
+    install_log_emitter()
+
     # Import agent factory AFTER env vars are set
     from agent import create_agent  # noqa: E402
 
@@ -80,6 +86,9 @@ def main():
     if not prompt:
         print("Empty prompt. Exiting.", file=sys.stderr)
         sys.exit(1)
+
+    # Store the user query so the log emitter can include it in the log record
+    os.environ["_BYO_USER_QUERY"] = prompt
 
     # Create agent and invoke — ADOT handles all trace instrumentation
     agent = create_agent(model_key)

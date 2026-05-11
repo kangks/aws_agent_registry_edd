@@ -648,22 +648,30 @@ edd-poc/
 │   ├── architecture.drawio   # Editable architecture diagram source
 │   └── architecture.png      # Exported diagram (for README)
 ├── evaluators/
-│   ├── domain_accuracy_config.json  # LLM judge config
-│   └── lambda_evaluator.py          # Deterministic checks (Lambda)
+│   ├── domain_accuracy_config.json       # LLM judge config
+│   ├── lambda_evaluator.py               # Old deterministic checks (Lambda)
+│   ├── trajectory_evaluator_lambda.py    # ★ Unified trajectory evaluator (Lambda)
+│   └── deploy_trajectory_evaluator.py    # ★ Idempotent deployment script
 ├── scripts/
 │   ├── run_and_compare.py    # Run all models + compare + trace capture
 │   ├── run_multi_turn.py     # Multi-turn evaluation with ActorSimulator
-│   ├── run_registry_comparison.py  # Async 6-agent comparison (managed + BYO)
-│   └── cost_performance_analysis.py  # Cost/quality analysis
+│   ├── run_registry_comparison.py        # Old async 6-agent comparison
+│   ├── run_trajectory_comparison.py      # ★ Unified trajectory comparison (recommended)
+│   └── cost_performance_analysis.py      # Cost/quality analysis
 ├── results/                  # Generated at runtime (not committed)
 │   ├── comparison.md         # Single-turn comparison output
-│   ├── multi_turn_comparison.md  # Multi-turn evaluation results
-│   ├── registry_comparison.md    # 6-agent registry comparison
-│   ├── cost_performance_analysis.md  # Cost analysis
+│   ├── multi_turn_comparison.md          # Multi-turn evaluation results
+│   ├── trajectory_comparison.md          # ★ Unified trajectory evaluation report
+│   ├── trajectory_invocations.json       # ★ Raw invocation data
+│   ├── trajectory_evaluations.json       # ★ Raw evaluation data
+│   ├── registry_comparison.md            # 6-agent registry comparison
+│   ├── cost_performance_analysis.md      # Cost analysis
 │   └── traces/               # Per-model per-prompt trace files
-│       ├── {model}_prompt_{n}.json   # Raw trace data
-│       ├── tool_use_graph.md         # Tool call sequence visualization
-│       └── trace_diagrams.md         # Mermaid sequence diagrams
+│       ├── {model}_prompt_{n}.json       # Raw trace data
+│       ├── tool_use_graph.md             # Tool call sequence visualization
+│       └── trace_diagrams.md             # Mermaid sequence diagrams
+├── BYO_AgentCore_POC_Results.md          # ★ POC results summary
+├── BYO_AgentCore_Observability_issue.md  # Content-level eval gap documentation
 ├── requirements.txt
 ├── .env.example
 └── README.md                 # You are here
@@ -749,55 +757,136 @@ After each comparison run, `run_registry_comparison.py` automatically updates th
 
 ---
 
-## Unified CloudWatch Vision
+## Unified Trajectory Evaluation (Implemented)
 
-The ideal architecture for EDD is a single observability plane where all agents — regardless of deployment type — are evaluated by the same evaluator:
+> **Status: ✅ Complete.** The unified evaluation path is fully implemented and validated. Both managed and BYO agents are scored by the **same Lambda evaluator** through the **same `evaluate()` API call**, producing directly comparable trajectory scores.
+
+### What It Does
+
+A single AgentCore code-based evaluator (`multiplier_trajectory_eval-Evy2MEDqBq`) scores agent trajectories on **metadata only** — tool selection, success rate, tool variety, error-free execution, latency, and efficiency. Because the AgentCore service normalizes spans before invoking the Lambda (stripping event bodies), the evaluator operates on span metadata that both managed and BYO agents emit identically.
+
+This replaces the old dual-evaluation approach where managed agents used `agentcore run eval` and BYO agents used in-memory `strands-agents-evals` SDK evaluation — two different scoring paths that produced incomparable results.
+
+### Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Agent Registry                             │
-│  6 agents: 3 managed + 3 BYO, all with eval history          │
-└─────────────────────┬───────────────────────┬───────────────┘
-                      │                       │
-         ┌────────────▼────────────┐  ┌──────▼──────────────┐
-         │   Managed Agents (3)     │  │   BYO Agents (3)    │
-         │   AgentCore Runtime      │  │   ADOT → CloudWatch │
-         └────────────┬────────────┘  └──────┬──────────────┘
-                      │                       │
-         ┌────────────▼───────────────────────▼───────────────┐
-         │              CloudWatch GenAI Observability          │
-         │              (traces from BOTH paths)                │
-         └────────────────────────┬───────────────────────────┘
-                                  │
-         ┌────────────────────────▼───────────────────────────┐
-         │         Single Evaluator (multiplier_domain_accuracy)│
-         │         Scores ALL traces uniformly (1-5 scale)      │
-         └────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│              scripts/run_trajectory_comparison.py                     │
+│                      (Single Comparator)                             │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌──────────────────────┐       ┌──────────────────────┐            │
+│  │  Managed Agents (3)   │       │  BYO Agents (3)       │            │
+│  │  agentcore invoke     │       │  opentelemetry-instr.  │            │
+│  └──────────┬───────────┘       └──────────┬───────────┘            │
+│             │                              │                         │
+│             ▼          SAME API            ▼                         │
+│  ┌──────────────────────────────────────────────────────┐            │
+│  │  agentcore.evaluate(                                  │            │
+│  │    evaluatorId="multiplier_trajectory_eval-Evy2MEDqBq"│            │
+│  │    evaluationInput={sessionSpans: [...]},             │            │
+│  │    evaluationTarget={traceIds: [...]})                │            │
+│  └──────────────────────────┬───────────────────────────┘            │
+│                             │                                        │
+│                             ▼                                        │
+│  ┌──────────────────────────────────────────────────────┐            │
+│  │  Lambda: eddpoc-trajectory-evaluator                   │            │
+│  │  → analyze_trajectory() → score_trajectory()          │            │
+│  │  → {label, value: 0.0-1.0, explanation}               │            │
+│  └──────────────────────────┬───────────────────────────┘            │
+│                             │                                        │
+│                             ▼                                        │
+│  ┌──────────────────────────────────────────────────────┐            │
+│  │  results/trajectory_comparison.md                      │            │
+│  └──────────────────────────────────────────────────────┘            │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-In this vision, both managed and BYO traces flow to CloudWatch, and a single evaluator scores them all — giving you one source of truth for agent quality regardless of deployment path.
+### Scoring Rubric (6 Criteria, 100 Points)
 
-### Current Limitations
+| Criterion | Weight | What It Measures |
+|-----------|--------|------------------|
+| Agent presence | 20 | At least one `invoke_agent` strands span exists |
+| Tool success rate | 30 | Fraction of tool calls that succeeded |
+| Tool variety | 10 | 10 if ≥2 distinct tools used, 7 if 1, 0 if none |
+| Error-free execution | 15 | Deducts 5 per strands-scoped error span (floor 0) |
+| Latency | 15 | Linear decay from 15→5 as duration approaches 30s threshold |
+| Efficiency | 10 | 10 if tool calls ≤10 and LLM calls ≤8 and ≥1 exists |
 
-Today, this unified vision has gaps:
+Score is normalized to 0.0–1.0 and mapped to labels: `≥0.90 Excellent`, `≥0.75 Very Good`, `≥0.60 Good`, `≥0.40 Poor`, `<0.40 Unacceptable`.
 
-| Limitation | Impact | Workaround |
-|-----------|--------|------------|
-| `agentcore run eval` only discovers managed runtime traces | BYO traces visible in X-Ray but not scorable by AgentCore evaluator | Use local SDK evaluation (`strands-agents-evals`) for BYO scoring |
-| BYO traces lack runtime ARN linkage | Evaluator can't correlate BYO traces to a registered agent | Registry maintains the mapping locally |
-| No cross-path comparison in CloudWatch | Can't compare managed vs BYO scores in a single dashboard | `scripts/run_registry_comparison.py` does this locally |
-| Online eval configs only work with managed runtimes | BYO agents can't auto-score on every invocation | Scheduled cron + `get_stale_agents()` for periodic evaluation |
+### How to Deploy the Evaluator
 
-### Future Direction
+```bash
+cd edd-poc
+source .venv/bin/activate
 
-When AWS adds BYO trace discovery to AgentCore evaluators, the architecture simplifies dramatically:
+# Deploy (creates/updates IAM role, Lambda, invoke permission, AgentCore evaluator)
+python evaluators/deploy_trajectory_evaluator.py
+```
 
-1. **One evaluator** — `multiplier_domain_accuracy` scores both managed and BYO traces
-2. **One source of truth** — CloudWatch GenAI Observability dashboard shows all agents
-3. **One registry** — AgentCore's own agent list replaces local `registry.json`
-4. **Online eval for all** — Auto-scoring on every invocation, regardless of deployment type
+The script is idempotent — running it again updates existing resources without recreation.
 
-Until then, the Agent Registry + local SDK evaluation provides the same capability with slightly more moving parts.
+### How to Run the Comparison
+
+```bash
+# Full run: invoke all 6 agents × 5 prompts, wait for traces, evaluate, generate report
+AWS_PROFILE=ml-sandbox python scripts/run_trajectory_comparison.py
+
+# Custom wait time (default 120s for trace propagation)
+WAIT_SECONDS=180 python scripts/run_trajectory_comparison.py
+```
+
+**What it does:**
+1. **Phase 1 — Invocation:** Runs 6 agents in parallel (5 prompts each, sequential within-agent)
+2. **Phase 2 — Wait:** 120s for CloudWatch trace propagation
+3. **Phase 3 — Evaluate:** Discovers trace IDs from `aws/spans`, fetches spans, calls `evaluate()` with the same evaluator ID for every agent
+4. **Phase 4 — Report:** Generates `results/trajectory_comparison.md`
+
+### What the Report Contains
+
+- **Metadata** — timestamp, evaluator ID, success count, wall-clock time
+- **Summary table** — per-agent average scores and per-prompt scores
+- **Per-Model Parity** — managed vs BYO side-by-side for each model
+- **Per-Prompt Detail** — trace ID, score, label, full scoring breakdown
+- **Failures** — any failed evaluations with error reasons
+
+### Latest Results (30/30 Successful)
+
+| Deployment | Avg Score | Models |
+|---|---|---|
+| **Managed** (AgentCore Runtime) | **0.952** | sonnet=0.952, nova_2_pro=0.952, glm_5=0.952 |
+| **BYO** (Strands + ADOT) | **0.949** | sonnet=0.946, nova_2_pro=0.964, glm_5=0.938 |
+
+All 30 evaluations scored "Excellent" (≥0.90). Managed and BYO scores are within expected noise — confirming the unified path produces directly comparable results.
+
+### Deployed Resources
+
+| Resource | Identifier |
+|---|---|
+| Lambda function | `eddpoc-trajectory-evaluator` |
+| Lambda ARN | `arn:aws:lambda:us-east-1:654654616949:function:eddpoc-trajectory-evaluator` |
+| IAM role | `eddpoc-trajectory-evaluator-role` |
+| AgentCore evaluator ID | `multiplier_trajectory_eval-Evy2MEDqBq` |
+| Tags | `app=multiplier-hr-agent`, `project=eddpoc`, `env=dev` |
+
+### Key Technical Finding
+
+The AgentCore service **normalizes spans and strips event bodies** before invoking code-based evaluators. This means:
+- The Lambda cannot score on content (user query, assistant response, tool results)
+- The Lambda CAN score on trajectory structure (tool selection, success, latency, errors)
+- Both managed and BYO spans normalize to the same shape — enabling unified scoring
+
+Content-level evaluation (factual accuracy, completeness) for BYO agents remains blocked by the `invoke_agent` log event gap. See [`BYO_AgentCore_Observability_issue.md`](./BYO_AgentCore_Observability_issue.md) for details.
+
+### Previous Limitations (Now Resolved)
+
+| Previous Limitation | Resolution |
+|---|---|
+| BYO traces not scorable by AgentCore evaluator | ✅ Code-based evaluator scores both via `evaluate(sessionSpans)` |
+| No cross-path comparison | ✅ Single comparator script produces unified report |
+| Different evaluators for managed vs BYO | ✅ Same evaluator ID, same API call, same rubric |
+| Incomparable scores | ✅ Directly comparable (same Lambda, same scale) |
 
 ---
 

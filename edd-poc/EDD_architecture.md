@@ -212,9 +212,271 @@ The agent code is identical — only the instrumentation wrapper differs. ADOT h
 
 ---
 
-## 7. Observability: Metrics, OTEL, and Traces
+## 7. Observability: OTEL Architecture for Managed and BYO Agents
 
-### OpenTelemetry Trace Structure
+### Overview
+
+Both managed and BYO agents emit OpenTelemetry (OTEL) telemetry to Amazon CloudWatch. The telemetry consists of **spans** (operation metadata) and **log events** (content payloads). The key difference between the two paths is WHO configures the OTEL pipeline and WHERE the data lands.
+
+![Observability Agents Overview](screenshots/observability_agents_overview_new.png)
+
+### 7.1 OTEL Configuration: Managed Agents (AgentCore Runtime)
+
+For managed agents, the AgentCore Runtime provides an **OTEL sidecar** that handles all instrumentation automatically. No OTEL configuration is needed in your agent code.
+
+**What the sidecar does:**
+1. Intercepts all Strands SDK spans (scope: `strands.telemetry.tracer`)
+2. Exports spans to `aws/spans` CloudWatch log group
+3. Exports log events to the runtime-specific log group
+4. **Creates the `invoke_agent` log event** (aggregates user query + final response)
+5. Sets resource attributes automatically (`service.name`, `aws.log.group.names`, etc.)
+
+**Agent code (minimal — no OTEL setup needed):**
+
+```python
+# agents/main.py (managed agent entrypoint)
+import os, sys
+os.environ["BYPASS_TOOL_CONSENT"] = "true"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Initialize Strands OTEL tracer — the sidecar hooks into this
+from strands.telemetry.tracer import get_tracer
+get_tracer()
+
+from bedrock_agentcore.runtime import BedrockAgentCoreApp
+from agent import create_agent
+
+app = BedrockAgentCoreApp()
+
+@app.handler
+def handler(session_id, prompt, **kwargs):
+    agent = create_agent(os.environ.get("AGENT_MODEL_KEY", "sonnet"))
+    return agent(prompt)
+
+app.run()
+```
+
+**OTEL data flow (managed):**
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  AgentCore Runtime Container                                         │
+│                                                                      │
+│  ┌──────────────────────┐    ┌──────────────────────────────────┐   │
+│  │  Your Agent Code      │    │  OTEL Sidecar (automatic)         │   │
+│  │  (Strands SDK)        │───▶│  • Collects spans                 │   │
+│  │  get_tracer()         │    │  • Creates invoke_agent event     │   │
+│  └──────────────────────┘    │  • Exports via OTLP               │   │
+│                               └──────────────┬───────────────────┘   │
+└──────────────────────────────────────────────┼───────────────────────┘
+                                               │
+                              ┌─────────────────▼─────────────────────┐
+                              │  CloudWatch                            │
+                              │                                        │
+                              │  aws/spans (spans)                     │
+                              │  /aws/bedrock-agentcore/runtimes/      │
+                              │    eddpoc_multiplier_hr_sonnet-        │
+                              │    5YhsT625tI-DEFAULT (events)         │
+                              └────────────────────────────────────────┘
+```
+
+**Sample span from managed agent (in `aws/spans`):**
+
+```json
+{
+  "traceId": "6a012f806b92e0b069c910684a2f01d4",
+  "spanId": "e79d2156ac138f63",
+  "parentSpanId": "ec3c4c7fb2603f7a",
+  "name": "invoke_agent Strands Agents",
+  "scope": {"name": "strands.telemetry.tracer", "version": ""},
+  "kind": "INTERNAL",
+  "startTimeUnixNano": 1778309938000000000,
+  "endTimeUnixNano": 1778309952000000000,
+  "attributes": {
+    "gen_ai.operation.name": "invoke_agent",
+    "gen_ai.agent.name": "Strands Agents",
+    "gen_ai.request.model": "us.anthropic.claude-sonnet-4-6",
+    "gen_ai.usage.input_tokens": 4608,
+    "gen_ai.usage.output_tokens": 822,
+    "gen_ai.usage.total_tokens": 5430,
+    "gen_ai.agent.tools": "[\"employee_lookup\", \"compliance_checker\", \"payroll_calculator\", \"leave_manager\"]",
+    "session.id": "55bb3c9b-b324-465e-9fe5-f37a2724138c",
+    "aws.local.service": "eddpoc_multiplier_hr_sonnet.DEFAULT",
+    "PlatformType": "AWS::BedrockAgentCore"
+  },
+  "resource": {
+    "attributes": {
+      "service.name": "eddpoc_multiplier_hr_sonnet.DEFAULT",
+      "aws.log.group.names": "/aws/bedrock-agentcore/runtimes/eddpoc_multiplier_hr_sonnet-5YhsT625tI-DEFAULT",
+      "cloud.platform": "aws_bedrock_agentcore",
+      "aws.service.type": "gen_ai_agent"
+    }
+  },
+  "status": {"code": "OK"}
+}
+```
+
+### 7.2 OTEL Configuration: BYO Agents (Outside AgentCore Runtime)
+
+For BYO agents, you configure OTEL via environment variables and wrap the agent with `opentelemetry-instrument`. The **AWS Distro for OpenTelemetry (ADOT)** handles the export pipeline.
+
+**Required environment variables:**
+
+```bash
+# Core ADOT configuration
+AGENT_OBSERVABILITY_ENABLED=true
+OTEL_PYTHON_DISTRO=aws_distro
+OTEL_PYTHON_CONFIGURATOR=aws_configurator
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_TRACES_EXPORTER=otlp
+
+# Service identification + log group routing
+OTEL_RESOURCE_ATTRIBUTES="service.name=multiplier-byo-sonnet,aws.log.group.names=/aws/bedrock-agentcore/runtimes/multiplier-byo-sonnet,aws.service.type=gen_ai_agent"
+
+# Log events export destination (critical for evaluation)
+OTEL_EXPORTER_OTLP_LOGS_HEADERS="x-aws-log-group=/aws/bedrock-agentcore/runtimes/multiplier-byo-sonnet,x-aws-log-stream=runtime-logs,x-aws-metric-namespace=bedrock-agentcore"
+
+# Session tracking
+BYO_SESSION_ID="byo-sonnet-unique-session-id"
+```
+
+**Agent code (BYO runner):**
+
+```python
+# agents/byo_runner.py
+from strands.telemetry.tracer import get_tracer
+get_tracer()  # Initialize Strands OTEL tracer
+
+from opentelemetry import baggage
+from opentelemetry.context import attach
+ctx = baggage.set_baggage("session.id", session_id)
+attach(ctx)
+
+from agent import create_agent
+agent = create_agent(model_key)
+result = agent(prompt)
+```
+
+**Invocation command:**
+
+```bash
+opentelemetry-instrument python agents/byo_runner.py --model sonnet --prompt "..."
+```
+
+**OTEL data flow (BYO):**
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Your Compute (EC2, ECS, Lambda, local machine)                      │
+│                                                                      │
+│  ┌──────────────────────┐    ┌──────────────────────────────────┐   │
+│  │  Your Agent Code      │    │  ADOT (opentelemetry-instrument)  │   │
+│  │  (Strands SDK)        │───▶│  • Collects spans                 │   │
+│  │  get_tracer()         │    │  • Collects log events            │   │
+│  └──────────────────────┘    │  • Exports via OTLP/HTTP          │   │
+│                               └──────────────┬───────────────────┘   │
+└──────────────────────────────────────────────┼───────────────────────┘
+                                               │
+                              ┌─────────────────▼─────────────────────┐
+                              │  CloudWatch                            │
+                              │                                        │
+                              │  aws/spans (spans)                     │
+                              │  /aws/bedrock-agentcore/runtimes/      │
+                              │    multiplier-byo-sonnet (events)       │
+                              └────────────────────────────────────────┘
+```
+
+**Sample span from BYO agent (in `aws/spans`):**
+
+```json
+{
+  "traceId": "6a014bf55b2682b8e8f8144c706a9b3d",
+  "spanId": "9625d3bc8a58eb96",
+  "parentSpanId": "",
+  "name": "invoke_agent Strands Agents",
+  "scope": {"name": "strands.telemetry.tracer", "version": ""},
+  "kind": "INTERNAL",
+  "startTimeUnixNano": 1778310564000000000,
+  "endTimeUnixNano": 1778310572000000000,
+  "attributes": {
+    "gen_ai.operation.name": "invoke_agent",
+    "gen_ai.agent.name": "Strands Agents",
+    "gen_ai.request.model": "us.anthropic.claude-sonnet-4-6",
+    "gen_ai.usage.input_tokens": 2741,
+    "gen_ai.usage.output_tokens": 320,
+    "gen_ai.usage.total_tokens": 3061,
+    "gen_ai.agent.tools": "[\"employee_lookup\", \"compliance_checker\", \"payroll_calculator\", \"leave_manager\"]",
+    "session.id": "byo-sonnet-unique-session-id",
+    "aws.local.service": "multiplier-byo-sonnet",
+    "PlatformType": "Generic"
+  },
+  "resource": {
+    "attributes": {
+      "service.name": "multiplier-byo-sonnet",
+      "aws.log.group.names": "/aws/bedrock-agentcore/runtimes/multiplier-byo-sonnet",
+      "aws.service.type": "gen_ai_agent",
+      "telemetry.sdk.name": "opentelemetry",
+      "telemetry.auto.version": "0.17.0-aws"
+    }
+  },
+  "status": {"code": "OK"}
+}
+```
+
+### 7.3 Key Differences Between Managed and BYO OTEL
+
+| Aspect | Managed (AgentCore Runtime) | BYO (ADOT) |
+|--------|---------------------------|-------------|
+| **OTEL setup** | Automatic (sidecar) | Manual (env vars + `opentelemetry-instrument`) |
+| **Spans destination** | `aws/spans` | `aws/spans` |
+| **Events destination** | `/aws/bedrock-agentcore/runtimes/{runtimeId}-DEFAULT` | `/aws/bedrock-agentcore/runtimes/{service-name}` |
+| **`invoke_agent` log event** | ✅ Created by sidecar | ❌ Not created (Strands SDK gap) |
+| **`chat` span events** | ✅ Present | ✅ Present |
+| **`execute_tool` span events** | ✅ Present | ✅ Present |
+| **`service.name`** | `eddpoc_{runtime_name}.DEFAULT` | Custom (e.g., `multiplier-byo-sonnet`) |
+| **`PlatformType`** | `AWS::BedrockAgentCore` | `Generic` |
+| **`cloud.platform`** | `aws_bedrock_agentcore` | Not set |
+| **Session ID source** | Auto-generated by Runtime | Set via `BYO_SESSION_ID` env var + OTEL baggage |
+
+### 7.4 Observability Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant User as User / Script
+    participant Managed as Managed Agent<br/>(AgentCore Runtime)
+    participant BYO as BYO Agent<br/>(Your Compute + ADOT)
+    participant Sidecar as OTEL Sidecar<br/>(Runtime only)
+    participant ADOT as ADOT Exporter<br/>(BYO only)
+    participant CW_Spans as CloudWatch<br/>aws/spans
+    participant CW_Events as CloudWatch<br/>Agent Log Group
+
+    rect rgb(232, 245, 233)
+    Note over User,CW_Events: MANAGED PATH
+    User->>Managed: agentcore invoke --runtime multiplier_hr_sonnet "prompt"
+    activate Managed
+    Managed->>Managed: Strands SDK executes (invoke_agent → chat → tools → chat)
+    Managed-->>User: response
+    deactivate Managed
+    Managed->>Sidecar: Spans + events (in-process)
+    Sidecar->>CW_Spans: Export spans (OTLP)
+    Sidecar->>CW_Events: Export events + synthetic invoke_agent event
+    end
+
+    rect rgb(227, 242, 253)
+    Note over User,CW_Events: BYO PATH
+    User->>BYO: opentelemetry-instrument python byo_runner.py --prompt "prompt"
+    activate BYO
+    BYO->>BYO: Strands SDK executes (invoke_agent → chat → tools → chat)
+    BYO-->>User: response
+    deactivate BYO
+    BYO->>ADOT: Spans + events (in-process)
+    ADOT->>CW_Spans: Export spans (OTLP/HTTP)
+    ADOT->>CW_Events: Export chat/tool events (OTEL_EXPORTER_OTLP_LOGS_HEADERS)
+    Note over CW_Events: ⚠️ No invoke_agent event<br/>(sidecar not present)
+    end
+```
+
+### 7.5 OpenTelemetry Trace Structure
 
 Every agent invocation produces a trace — a tree of spans representing every action:
 
@@ -233,58 +495,20 @@ invoke_agent Strands Agents (root span, 14.82s)
     └── chat → chat us.anthropic.claude-sonnet-4-6
 ```
 
-### Three Trace Capture Paths
+This structure is **identical** for both managed and BYO agents — same span names, same scope, same attributes. The only differences are in `resource.attributes` (service name, platform type).
 
-| Path | Where Agent Runs | How Traces Export | Best For |
-|------|-----------------|-------------------|----------|
-| **AgentCore Runtime** | Managed | Automatic (OTEL sidecar) | Production, continuous eval |
-| **BYO + ADOT** | Your compute | ADOT → CloudWatch | Existing infra, observability |
-| **InMemoryExporter** | Local process | Captured in-memory | Development, offline comparison |
+### 7.6 CloudWatch GenAI Observability Dashboard
 
-### CloudWatch GenAI Observability Dashboard
+The dashboard provides a unified view of all agents (both managed and BYO):
 
-The dashboard provides a unified view of all agents:
-
-![AgentCore Observability Overview](screenshots/01_agentcore_observability_overview.png)
+![Agent Detail: BYO Agent](screenshots/observability_byo_agent_detail.png)
 
 **Key metrics visible:**
-- **6/3 Agents/Endpoints** — 6 agents across 3 endpoint types
-- **30 Sessions** — from the latest comparison run
-- **150 Traces** — 5 prompts × 6 agents × multiple spans
-- **194.1K Total tokens** — across all invocations
-- **0% Error rate** — all invocations successful
-- **0% Throttle rate** — no throttling encountered
-
-### Agent Detail: Span Metrics
-
-Clicking into an agent shows per-span metrics including tool execution counts and latency:
-
-![Agent Detail Spans](screenshots/03_agent_detail_spans.png)
-
-### Token Usage Over Time
-
-The FM token usage graph shows input/output token consumption patterns:
-
-![Agent Metrics Tokens](screenshots/04_agent_metrics_tokens.png)
-
-### Trace List
-
-Each agent has a list of traces with span counts, token usage, and timing:
-
-![Traces List](screenshots/05_traces_list.png)
-
-### Trace Detail: Span Tree + Trajectory Graph
-
-Clicking into a trace reveals the full execution flow as both a span tree and a visual trajectory graph:
-
-![Trace Detail Graph](screenshots/06_trace_detail_graph.png)
-
-This trace shows:
-- **16 spans** total for a multi-tool query
-- **3 event loop cycles** (model reasoning → tool calls → synthesis)
-- **3 tool executions** (employee_lookup, compliance_checker, payroll_calculator)
-- **5,427 tokens** consumed
-- **14.82s** total latency
+- Sessions, traces, and spans for each agent
+- Token usage (input/output) over time
+- Latency distribution
+- Error rates
+- Tool execution counts
 
 ---
 
@@ -359,164 +583,149 @@ The most rigorous evaluation approach:
 3. **Score:** Use `CorrectnessEvaluator` to compare contender responses against Sonnet's (binary CORRECT/INCORRECT)
 4. **Rank:** Combine correctness + helpfulness + cost for final recommendation
 
-### 8.1 Unified Evaluation Path
+### 8.1 Unified Trajectory Evaluation (Implemented)
 
-> **This section supersedes the dual-evaluation architecture described in Section 10.** The unified evaluation path replaces the old approach where managed agents used `agentcore run eval` (CLI-based) and BYO agents used in-memory `strands-agents-evals` SDK evaluation — two fundamentally different scoring paths that produced incomparable results.
+> **Status: ✅ Complete.** This section describes the **implemented** unified evaluation architecture. It supersedes the dual-evaluation approach described in Section 10 and the earlier `run_unified_comparison.py` attempt that used the LLM-as-a-Judge evaluator (which failed for BYO agents due to the `invoke_agent` log event gap).
 
-#### Why Unified?
+#### Why a Code-Based (Lambda) Evaluator?
 
-The previous dual-evaluation approach had a critical flaw: managed and BYO agents were scored by **different evaluators** using **different methodologies**. Managed agents were scored by the AgentCore Evaluate API (LLM-as-a-Judge on full traces), while BYO agents were scored by the local `strands-agents-evals` SDK (in-memory span mapping + local evaluators). This made cross-path comparison unreliable.
+The LLM-as-a-Judge evaluator (`multiplier_domain_accuracy`) requires an `invoke_agent` log event with `body.input`/`body.output`. For managed agents this event is emitted by the AgentCore Runtime sidecar; for BYO agents the Strands SDK does not emit it. Attempting to use LLM-as-a-Judge for BYO agents fails with `LogEventMissingException`.
 
-The unified path ensures **both** managed and BYO agents are scored by the **same AgentCore Evaluate API** using the **same evaluators**, producing **directly comparable** results.
+Code-based evaluators use a different service code path that does not require that log event. Instead, the service normalizes spans, **strips event bodies**, and invokes the Lambda with metadata only. This works identically for managed and BYO because both emit the same span metadata shape.
 
-#### Architecture: 4-Phase Pipeline
+#### Architecture: Single Evaluator + Single Comparator
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                   scripts/run_unified_comparison.py                       │
+│              scripts/run_trajectory_comparison.py                         │
+│                      (Single Comparator)                                 │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
-│  Phase 1: Invocation (ThreadPoolExecutor, max_workers=6)                 │
-│  ┌──────────────────────────┐    ┌──────────────────────────┐            │
-│  │  Managed Agents (3)       │    │  BYO Agents (3)          │            │
-│  │  agentcore invoke         │    │  opentelemetry-instrument │            │
-│  │  → session_id             │    │  → service_name + ts     │            │
-│  └──────────┬───────────────┘    └──────────┬───────────────┘            │
-│             │                               │                            │
-│  Phase 2: Wait (configurable, default 120s)                              │
-│             │                               │                            │
-│  Phase 3: Evaluation (ThreadPoolExecutor)                                │
-│  ┌──────────▼───────────────┐    ┌──────────▼───────────────┐            │
-│  │  Managed Evaluator        │    │  BYO Span Retriever       │            │
-│  │  evaluate(                │    │  CW Logs Insights         │            │
-│  │    runtimeArn,            │    │  (aws/spans log group)    │            │
-│  │    sessionId)             │    │  → Session_Spans          │            │
-│  │                           │    │  → evaluate(              │            │
-│  │                           │    │      sessionSpans)        │            │
-│  └──────────┬───────────────┘    └──────────┬───────────────┘            │
-│             │                               │                            │
-│             ▼         SAME EVALUATOR         ▼                            │
-│  ┌──────────────────────────────────────────────────────────┐            │
-│  │  AgentCore Evaluate API                                   │            │
-│  │  evaluatorNames: ["multiplier_domain_accuracy", ...]      │            │
-│  └──────────────────────────────┬───────────────────────────┘            │
-│                                 │                                        │
-│  Phase 4: Report + Registry Update                                       │
-│  ┌──────────────────────────────▼───────────────────────────┐            │
-│  │  ReportGenerator                                          │            │
-│  │  → results/unified_comparison.md                          │            │
-│  │  → registry/registry.json (local)                         │            │
-│  │  → AWS Agent Registry (cloud)                             │            │
-│  └──────────────────────────────────────────────────────────┘            │
-│                                                                          │
+│  Phase 1 — Invocation (ThreadPoolExecutor max_workers=6)                 │
+│  ┌──────────────────────────┐   ┌──────────────────────────┐             │
+│  │  Managed (3 agents)       │   │  BYO (3 agents)           │             │
+│  │  agentcore invoke          │   │  opentelemetry-instrument │             │
+│  │  → spans in aws/spans      │   │  → spans in aws/spans     │             │
+│  └──────────────┬───────────┘   └──────────────┬───────────┘             │
+│                 │                              │                         │
+│  Phase 2 — Trace Propagation Wait (120 s default)                        │
+│                 │                              │                         │
+│  Phase 3 — Trace Discovery + Evaluation                                  │
+│  ┌──────────────▼──────────────────────────────▼───────────┐             │
+│  │  discover_trace_ids() — CW Logs Insights on aws/spans    │             │
+│  │  fetch_session_spans() — spans + events for trace        │             │
+│  │                                                          │             │
+│  │  agentcore.evaluate(                                     │             │
+│  │    evaluatorId="multiplier_trajectory_eval-Evy2MEDqBq",  │             │
+│  │    evaluationInput={sessionSpans: [...]},                │             │
+│  │    evaluationTarget={traceIds: [...]})                   │             │
+│  │                                                          │             │
+│  │  ┌────────────────────────────────────────────────┐      │             │
+│  │  │ AgentCore service normalizes spans, strips     │      │             │
+│  │  │ event bodies, invokes the Lambda:              │      │             │
+│  │  │                                                │      │             │
+│  │  │  eddpoc-trajectory-evaluator                   │      │             │
+│  │  │    analyze_trajectory() → score_trajectory()   │      │             │
+│  │  │    → {label, value, explanation}               │      │             │
+│  │  └────────────────────────────────────────────────┘      │             │
+│  └──────────────────────────┬───────────────────────────────┘             │
+│                             │                                            │
+│  Phase 4 — Report Generation                                             │
+│  ┌──────────────────────────▼───────────────────────────────┐             │
+│  │  generate_report() → results/trajectory_comparison.md    │             │
+│  │  Also saves: trajectory_invocations.json,                │             │
+│  │              trajectory_evaluations.json                  │             │
+│  └──────────────────────────────────────────────────────────┘             │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Unified Evaluation Sequence Diagram
+#### Key Finding: AgentCore Normalizes Spans Before Invoking Code-Based Evaluators
 
-```mermaid
-sequenceDiagram
-    participant Script as run_unified_comparison.py
-    participant Managed as Managed Agent<br/>(AgentCore Runtime)
-    participant BYO as BYO Agent<br/>(ADOT instrumented)
-    participant CW as CloudWatch<br/>(aws/spans log group)
-    participant Eval as AgentCore<br/>Evaluate API
-    participant Reg as Registry<br/>(local + AWS)
+When you pass `sessionSpans` to the evaluate API with a code-based evaluator, the service **normalizes and filters** them before invoking the Lambda:
 
-    Note over Script: Phase 1: Invocation (parallel, max_workers=6)
+- **Log events (with `body`) are stripped entirely** — Lambda receives 0 events even when dozens are passed in
+- **Span inline `events` and `span_events` fields are empty**
+- **Only span metadata survives** — attributes, status, scope, timing, session.id
+- **Both camelCase and snake_case keys** are provided (e.g., `parentSpanId` + `parent_span_id`)
 
-    par Invoke all 6 agents
-        Script->>Managed: agentcore invoke --runtime {name} {prompt}
-        Managed-->>Script: response + session_id
-    and
-        Script->>BYO: opentelemetry-instrument python byo_runner.py
-        BYO-->>Script: response (record service_name + timestamp)
-        BYO->>CW: ADOT exports spans (async)
-    end
+This means code-based evaluators **cannot score on content** (user query, assistant response, tool parameters, tool results). They score on **trajectory structure and metadata** only. The design turns this constraint into a feature — the rubric is deterministic and deployment-agnostic.
 
-    Note over Script: Phase 2: Wait (default 120s for trace propagation)
+#### Scoring Rubric (6 Criteria, 100 Points)
 
-    Note over Script: Phase 3: Evaluation
+| Criterion | Weight | Rule |
+|---|---|---|
+| Agent presence | 20 | 20 if ≥1 `strands.telemetry.tracer` invoke_agent span exists, else 0 |
+| Tool success | 30 | `30 × (successful_tool_calls / total_tool_calls)`, or 15 if no tool calls |
+| Tool variety | 10 | 10 if distinct tool names ≥ 2, 7 if exactly 1, 0 if none |
+| Error-free | 15 | `15 − min(15, error_span_count × 5)` (strands-scoped only) |
+| Latency | 15 | Linear decay 15→5 as `agent_duration_s` approaches 30s; 0 above threshold |
+| Efficiency | 10 | 10 if tool calls ≤ 10 and LLM calls ≤ 8 and ≥1 of either exists, else 0 |
+| **Total** | **100** | Normalized to 0.0–1.0 for return value |
 
-    Script->>CW: CloudWatch Logs Insights query<br/>(filter by service.name, timestamp)
-    CW-->>Script: BYO spans (Session_Spans format)
+Label mapping: `≥0.90 Excellent`, `≥0.75 Very Good`, `≥0.60 Good`, `≥0.40 Poor`, `<0.40 Unacceptable`.
 
-    par Evaluate all agents via same API
-        Script->>Eval: evaluate(runtimeArn, sessionId, evaluatorNames)
-        Note over Eval: Score managed trace
-        Eval-->>Script: scores + justification
-    and
-        Script->>Eval: evaluate(sessionSpans, evaluatorNames)
-        Note over Eval: Score BYO trace
-        Eval-->>Script: scores + justification
-    end
+#### The evaluate() Call — Identical for Both Deployment Types
 
-    Note over Script: Phase 4: Report + Registry Update
-
-    Script->>Script: Generate results/unified_comparison.md
-    Script->>Reg: Update local registry (avg scores)
-    Script->>Reg: Update AWS Agent Registry (best-effort)
+```python
+# Same call for managed AND BYO — no branching on agent_type
+agentcore.evaluate(
+    evaluatorId="multiplier_trajectory_eval-Evy2MEDqBq",
+    evaluationInput={"sessionSpans": [<spans from CloudWatch>]},
+    evaluationTarget={"traceIds": [trace_id]},
+)
 ```
 
-#### Key Differences from Old Approach
+There is no branching on deployment type. Managed and BYO are indistinguishable at the API level.
 
-| Aspect | Old (Dual-Evaluation) | New (Unified Path) |
-|--------|----------------------|-------------------|
-| Managed evaluation | `agentcore run eval` CLI | `evaluate(runtimeArn, sessionId)` API |
-| BYO evaluation | In-memory `strands-agents-evals` SDK | `evaluate(sessionSpans)` API |
-| Evaluator used | Different per path | **Same** (`multiplier_domain_accuracy`) |
-| Scores comparable? | ❌ No (different methodologies) | ✅ Yes (same evaluator, same rubric) |
-| BYO span source | In-memory exporter (local) | CloudWatch `aws/spans` log group |
-| Script | `scripts/run_registry_comparison.py` | `scripts/run_unified_comparison.py` |
+#### Deployed Resources
 
-#### How BYO Spans Are Retrieved
+| Resource | Identifier |
+|---|---|
+| IAM role | `eddpoc-trajectory-evaluator-role` |
+| Lambda function | `eddpoc-trajectory-evaluator` |
+| Lambda ARN | `arn:aws:lambda:us-east-1:654654616949:function:eddpoc-trajectory-evaluator` |
+| Evaluator name | `multiplier_trajectory_eval` |
+| Evaluator ID | `multiplier_trajectory_eval-Evy2MEDqBq` |
 
-BYO agents export their OTEL spans to CloudWatch via ADOT. The unified script retrieves these spans using CloudWatch Logs Insights:
+All resources tagged `app=multiplier-hr-agent, project=eddpoc, env=dev`.
 
-1. Query the `aws/spans` log group filtering by `service.name` resource attribute
-2. Time range: invocation start minus 60s (clock skew buffer) to invocation end plus 60s
-3. Parse log events into the `Session_Spans` JSON format expected by the Evaluate API
-4. Pass spans directly to `evaluate(sessionSpans=...)` — same evaluator scores them
+#### Latest Results (30/30 Successful)
 
-#### Unified Comparison Script
+| Deployment | Avg Score | Per-Model Scores |
+|---|---|---|
+| **Managed** | **0.952** | sonnet=0.952, nova_2_pro=0.952, glm_5=0.952 |
+| **BYO** | **0.949** | sonnet=0.946, nova_2_pro=0.964, glm_5=0.938 |
 
-**Script:** `scripts/run_unified_comparison.py`
+All 30 evaluations scored "Excellent" (≥0.90). Per-model deltas are within noise (max Δ=0.034 for glm_5), confirming the unified path produces directly comparable results.
 
-**CLI Usage:**
+#### How to Run
 
 ```bash
-# Full run: invoke all 6 agents, wait, evaluate, generate report
-python scripts/run_unified_comparison.py
+# Deploy the evaluator (idempotent)
+python evaluators/deploy_trajectory_evaluator.py
 
-# Custom wait time and evaluators
-python scripts/run_unified_comparison.py --wait-seconds 180 --evaluators multiplier_domain_accuracy,Builtin.Helpfulness
+# Run the full comparison (~7 min)
+AWS_PROFILE=ml-sandbox python scripts/run_trajectory_comparison.py
 
-# Skip invocation (use data from previous run)
-python scripts/run_unified_comparison.py --skip-invocation
+# Custom wait time
+WAIT_SECONDS=180 python scripts/run_trajectory_comparison.py
 ```
 
-**CLI Arguments:**
+#### What Remains Open
 
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--wait-seconds N` | 120 | Trace propagation delay in seconds |
-| `--evaluators LIST` | `multiplier_domain_accuracy` | Comma-separated evaluator names |
-| `--skip-invocation` | false | Skip invocation phase, use intermediate data |
+Content-level evaluation (factual accuracy, completeness, compliance safety) for BYO agents is still blocked by the `invoke_agent` log event gap. The trajectory evaluator handles structure; a future external content judge (calling Bedrock directly, bypassing AgentCore) could handle content. See [`BYO_AgentCore_Observability_issue.md`](./BYO_AgentCore_Observability_issue.md) for the full issue documentation.
 
-**Environment Variables:**
+#### Evolution from Old Approach
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AWS_PROFILE` | `ml-sandbox` | AWS profile for boto3 clients |
-| `AWS_REGION` | `us-east-1` | AWS region for all API calls |
-
-**Output Files:**
-
-| File | Purpose |
-|------|---------|
-| `results/unified_comparison.md` | Final comparison report (scores, justifications, recommendations) |
-| `results/unified_intermediate.json` | Intermediate state for resumption on failure |
-| `registry/registry.json` | Local registry updated with average scores |
+| Aspect | Old (Dual-Evaluation) | Intermediate (`run_unified_comparison.py`) | Current (`run_trajectory_comparison.py`) |
+|--------|----------------------|-------------------------------------------|------------------------------------------|
+| Managed evaluation | `agentcore run eval` CLI | `evaluate(runtimeArn, sessionId)` | `evaluate(sessionSpans)` |
+| BYO evaluation | In-memory `strands-agents-evals` SDK | `evaluate(sessionSpans)` | `evaluate(sessionSpans)` |
+| Evaluator | Different per path | Same (`multiplier_domain_accuracy`) | Same (`multiplier_trajectory_eval`) |
+| BYO works? | ✅ (different scores) | ❌ (`LogEventMissingException`) | ✅ (identical path) |
+| Scores comparable? | ❌ | ❌ (BYO fails) | ✅ |
+| Evaluator type | Mixed | LLM-as-a-Judge | Code-based (Lambda) |
+| Scores on | Content + structure | Content | Structure (metadata only) |
 
 ---
 
@@ -828,147 +1037,180 @@ The Mermaid diagrams above can be rendered in:
 
 ## 10. Evaluation Sequence Diagrams
 
-### Managed Path: AgentCore Runtime + Online Evaluation
+### 10.1 Unified Trajectory Evaluation (Current — Single Evaluator for Both Paths)
+
+This is the **implemented** evaluation architecture. A single AgentCore code-based evaluator (Lambda) scores both managed and BYO agents through the same `evaluate()` API call.
+
+![Evaluators List](screenshots/evaluators_list.png)
+
+```mermaid
+sequenceDiagram
+    participant Script as Comparator Script<br/>(run_trajectory_comparison.py)
+    participant Managed as Managed Agent<br/>(AgentCore Runtime)
+    participant BYO as BYO Agent<br/>(Your Compute + ADOT)
+    participant CW as CloudWatch<br/>(aws/spans + agent log groups)
+    participant API as AgentCore<br/>evaluate() API
+    participant Lambda as Trajectory Evaluator<br/>(eddpoc-trajectory-evaluator)
+
+    rect rgb(232, 245, 233)
+    Note over Script,CW: Phase 1 — Invocation (parallel, 6 agents × 5 prompts)
+    Script->>Managed: agentcore invoke (3 agents, 5 prompts each)
+    Script->>BYO: opentelemetry-instrument (3 agents, 5 prompts each)
+    Managed-->>Script: responses
+    BYO-->>Script: responses
+    Managed->>CW: spans + events (via sidecar)
+    BYO->>CW: spans + events (via ADOT)
+    end
+
+    rect rgb(255, 243, 224)
+    Note over Script,CW: Phase 2 — Wait (120s for trace propagation)
+    Script->>Script: sleep(120s) with countdown
+    end
+
+    rect rgb(227, 242, 253)
+    Note over Script,Lambda: Phase 3 — Evaluation (same API for both)
+    Script->>CW: discover_trace_ids() via Logs Insights
+    CW-->>Script: trace IDs (5 per agent)
+    
+    loop For each (agent, prompt) — 30 total
+        Script->>CW: fetch_session_spans(trace_id)
+        CW-->>Script: spans + events
+        Script->>API: evaluate(evaluatorId="multiplier_trajectory_eval-Evy2MEDqBq",<br/>evaluationInput={sessionSpans}, evaluationTarget={traceIds})
+        API->>API: Normalize spans, strip event bodies
+        API->>Lambda: Invoke with normalized span metadata
+        Lambda->>Lambda: analyze_trajectory() → score_trajectory()
+        Lambda-->>API: {label, value: 0.95, explanation: "..."}
+        API-->>Script: evaluationResults
+    end
+    end
+
+    rect rgb(243, 229, 245)
+    Note over Script,Script: Phase 4 — Report
+    Script->>Script: generate_report() → results/trajectory_comparison.md
+    Script->>Script: Print summary (30/30, managed=0.952, BYO=0.949)
+    end
+```
+
+**Key points:**
+- **Same evaluator ID** for both managed and BYO — no branching on agent type
+- **Same API call shape** — `evaluate(evaluatorId, evaluationInput.sessionSpans, evaluationTarget.traceIds)`
+- **AgentCore normalizes spans** before invoking Lambda — both deployment types look identical to the evaluator
+- **Lambda scores on metadata** — tool selection, success rate, variety, errors, latency, efficiency
+- **30/30 evaluations succeed** — managed avg 0.952, BYO avg 0.949
+
+### 10.2 How the Code-Based Evaluator Works (Internal Flow)
+
+```mermaid
+sequenceDiagram
+    participant Caller as Comparator Script
+    participant Service as AgentCore Evaluate Service
+    participant Lambda as eddpoc-trajectory-evaluator
+
+    Caller->>Service: evaluate(evaluatorId, sessionSpans=[44 items], traceIds=[...])
+    
+    Note over Service: 1. Filter sessionSpans to target traceId
+    Note over Service: 2. Normalize span fields (add snake_case aliases)
+    Note over Service: 3. STRIP all log events (items with "body")
+    Note over Service: 4. Keep only span metadata (attributes, status, scope, timing)
+    
+    Service->>Lambda: Invoke with {schemaVersion, evaluationLevel, evaluationInput.sessionSpans=[16 spans], evaluationTarget}
+    
+    Note over Lambda: analyze_trajectory():<br/>• Find invoke_agent span (agent presence)<br/>• Count execute_tool spans (tool success/variety)<br/>• Count chat spans (LLM calls, tokens)<br/>• Check status.code for errors<br/>• Compute latency from timestamps
+    
+    Note over Lambda: score_trajectory():<br/>• agent_present: 20/20<br/>• tool_success: 30/30<br/>• tool_variety: 10/10<br/>• no_errors: 15/15<br/>• latency: 11/15<br/>• efficiency: 10/10<br/>• TOTAL: 96/100 = 0.96
+    
+    Lambda-->>Service: {label: "Excellent", value: 0.96, explanation: "Trajectory: 16 spans, 3 tool calls..."}
+    Service-->>Caller: evaluationResults[{evaluatorName, value, label, explanation}]
+```
+
+**What the Lambda receives (after service normalization):**
+
+```json
+{
+  "schemaVersion": "1.0",
+  "evaluatorId": "multiplier_trajectory_eval-Evy2MEDqBq",
+  "evaluationLevel": "TRACE",
+  "evaluationInput": {
+    "sessionSpans": [
+      {
+        "name": "invoke_agent Strands Agents",
+        "scope": {"name": "strands.telemetry.tracer"},
+        "span_id": "9625d3bc8a58eb96",
+        "trace_id": "6a014bf55b2682b8e8f8144c706a9b3d",
+        "session_id": "byo-sonnet-p3-abc123",
+        "source": "adot_cw",
+        "attributes": {
+          "gen_ai.operation.name": "invoke_agent",
+          "gen_ai.usage.input_tokens": 2741,
+          "gen_ai.usage.output_tokens": 320,
+          "gen_ai.usage.total_tokens": 3061,
+          "gen_ai.request.model": "us.anthropic.claude-sonnet-4-6",
+          "gen_ai.agent.tools": "[\"employee_lookup\", ...]"
+        },
+        "status": {"code": "OK"},
+        "startTimeUnixNano": 1778310564000000000,
+        "endTimeUnixNano": 1778310572000000000,
+        "duration_ms": 8000
+      }
+    ]
+  },
+  "evaluationTarget": {"traceIds": ["6a014bf55b2682b8e8f8144c706a9b3d"]}
+}
+```
+
+**What the Lambda does NOT receive:**
+- ❌ Log event bodies (user query text, assistant response text)
+- ❌ Tool call parameters or results
+- ❌ LLM prompt/completion content
+- ❌ Any PII or conversation content
+
+This is by design — the service enforces data governance by stripping content before invoking external code.
+
+### 10.3 OTEL Differences That Affect Evaluation
+
+| OTEL Element | Managed | BYO | Impact on Evaluation |
+|---|---|---|---|
+| `invoke_agent` **span** | ✅ Present in `aws/spans` | ✅ Present in `aws/spans` | ✅ Both score 20/20 on agent presence |
+| `invoke_agent` **log event** | ✅ Created by sidecar | ❌ Not created | ⚠️ Blocks LLM-as-a-Judge for BYO (not needed for code-based) |
+| `execute_tool` spans | ✅ With `gen_ai.tool.status` | ✅ With `gen_ai.tool.status` | ✅ Both score on tool success/variety |
+| `chat` spans | ✅ With token counts | ✅ With token counts | ✅ Both score on efficiency |
+| `session.id` attribute | ✅ Auto-set by Runtime | ✅ Set via OTEL baggage | ✅ Both discoverable by session |
+| Span `status.code` | ✅ OK/ERROR | ✅ OK/ERROR | ✅ Both score on error-free execution |
+| `gen_ai.request.model` | ✅ Present | ✅ Present | ✅ Both report model in explanation |
+
+**Bottom line:** For the code-based trajectory evaluator, managed and BYO spans are **functionally identical**. The evaluator cannot distinguish between them.
+
+### 10.4 Managed Path: Online Evaluation (LLM-as-a-Judge, Managed Only)
+
+> This path works ONLY for managed agents because it requires the `invoke_agent` log event.
 
 ```mermaid
 sequenceDiagram
     participant Client as Client<br/>(agentcore invoke)
     participant Runtime as AgentCore Runtime<br/>(OTEL sidecar)
     participant CW as CloudWatch<br/>GenAI Observability
-    participant Eval as Evaluator<br/>(LLM Judge / Lambda)
-    participant Reg as Registry<br/>(local + AWS)
+    participant Eval as Evaluator<br/>(LLM Judge)
 
     Client->>Runtime: 1. invoke(prompt)
     activate Runtime
-
-    Note over Runtime: 2. Agent executes<br/>Inference Span 1<br/>Tool Span 1<br/>Inference Span 2<br/>Tool Span 2<br/>Inference Span 3
-
+    Note over Runtime: 2. Agent executes
     Runtime-->>Client: 3. response
     deactivate Runtime
 
-    Runtime->>CW: 4. Export trace (automatic OTEL sidecar)
+    Runtime->>CW: 4. Export trace + invoke_agent event (sidecar)
     activate CW
-
-    Note over CW: Trace indexed (~10 min)
-
+    Note over CW: Trace indexed (~15 min idle timeout)
     CW->>Eval: 5. Online eval trigger (100% sampling)
     activate Eval
-    Note over Eval: 6. LLM reads trace,<br/>scores 1-5 on rubric
-    Eval-->>CW: 7. Store eval score
+    Note over Eval: 6. LLM reads invoke_agent event,<br/>extracts user_query + agent_response,<br/>scores 1-5 on rubric
+    Eval-->>CW: 7. Store eval score in output log group
     deactivate Eval
     deactivate CW
-
-    Client->>CW: 8. agentcore run eval (on-demand)
-    activate CW
-    CW->>Eval: 9. Fetch trace + run evaluator
-    activate Eval
-    Eval-->>Client: 10. eval results (score + justification)
-    deactivate Eval
-    deactivate CW
-
-    Client->>Reg: 11. Update registry with scores
 ```
 
-**Key points:**
-- Steps 1-3: Normal agent invocation (client → runtime → response)
-- Step 4: OTEL sidecar automatically exports trace to CloudWatch (no code needed)
-- Steps 5-7: Online evaluation auto-triggers (100% sampling) — LLM judge scores the trace
-- Steps 8-10: On-demand evaluation via `agentcore run eval` CLI
-- Step 11: Registry updated with latest scores for tracking over time
+**Why this doesn't work for BYO:** Step 4 requires the sidecar to create the `invoke_agent` log event. Without it, Step 6 fails with `LogEventMissingException`. See [`BYO_AgentCore_Observability_issue.md`](./BYO_AgentCore_Observability_issue.md).
 
-### BYO Path: ADOT + Local SDK Evaluation
-
-> ⚠️ **DEPRECATED (May 2026):** The local SDK evaluation path described below has been superseded by the **Unified Evaluation Path** (Section 8.1). Both managed and BYO agents are now evaluated through the AgentCore Evaluate API using the same evaluators. The in-memory `strands-agents-evals` SDK approach is retained here for historical reference only. Use `scripts/run_unified_comparison.py` instead of the old `scripts/run_registry_comparison.py`.
-
-```mermaid
-sequenceDiagram
-    participant Client as Client<br/>(script / CLI)
-    participant Agent as BYO Agent<br/>(your compute + ADOT)
-    participant CW as CloudWatch<br/>GenAI Observability
-    participant SDK as Local SDK Eval<br/>(strands-evals<br/>InMemoryExporter)
-    participant Reg as Registry<br/>(local + AWS)
-
-    Client->>Agent: 1. invoke (opentelemetry-instrument)
-    activate Agent
-
-    Note over Agent: 2. Agent executes<br/>Inference Span 1<br/>Tool Span 1<br/>Inference Span 2<br/>Tool Span 2<br/>Inference Span 3
-
-    Agent-->>Client: 3. response
-    deactivate Agent
-
-    par Trace export (async)
-        Agent->>CW: 4. ADOT exports trace (http/protobuf)
-        Note over CW: Trace visible in<br/>GenAI Observability dashboard
-    and In-memory capture (sync)
-        Agent->>SDK: 5. Spans captured in-memory
-    end
-
-    activate SDK
-    Note over SDK: 6. StrandsInMemorySessionMapper<br/>maps spans → structured session
-
-    Note over SDK: 7. Run evaluators:<br/>• CorrectnessEvaluator (vs baseline)<br/>• HelpfulnessEvaluator<br/>• FaithfulnessEvaluator<br/>• CoherenceEvaluator<br/>• ToolSelectionAccuracy<br/>• ToolParameterAccuracy
-
-    SDK-->>Client: 8. eval scores
-    deactivate SDK
-
-    Client->>Reg: 9. Update registry with scores
-```
-
-**Key differences from Managed path:**
-- Step 4: ADOT (not sidecar) exports traces — requires env vars but no code changes
-- Steps 5-7: Evaluation can happen **locally** via `strands-agents-evals` SDK, OR via the AgentCore `evaluate()` API by fetching spans from CloudWatch
-- The `InMemorySpanExporter` captures spans in-process (parallel to ADOT export)
-- `StrandsInMemorySessionMapper` converts raw spans into structured sessions for local evaluators
-- Online eval (auto-scoring) is not supported — but **on-demand** and **batch** evaluation work by querying spans from CloudWatch's `aws/spans` log group
-
-> **Note:** The AgentCore `evaluate()` API accepts raw `sessionSpans` as input regardless of where the agent runs. For BYO agents, fetch spans from CloudWatch Logs (`aws/spans` log group) and pass them to the API. This enables using the same built-in and custom evaluators (e.g., `Builtin.Helpfulness`, `Builtin.ToolSelectionAccuracy`) for both managed and BYO agents. See [AgentCore Evaluations documentation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/how-it-works-evaluations.html).
-
-### Side-by-Side: What Each Path Produces
-
-> ⚠️ **Note:** The diagram below shows the **old architecture** where BYO agents had a separate "Local SDK Evaluator" path. In the unified architecture (Section 8.1), both paths converge on the **AgentCore Evaluate API** — the local SDK evaluator path is deprecated.
-
-```mermaid
-graph TB
-    subgraph Managed["MANAGED PATH"]
-        direction TB
-        M_Trace["CloudWatch Traces<br/>• Linked to runtime ARN<br/>• Auto-discovered by evaluators"]
-        M_Eval["AgentCore Evaluator<br/>• Built-in (Helpfulness, GoalSuccess, etc.)<br/>• Custom (LLM Judge, Lambda)<br/>• Online eval (auto, 100% sampling)<br/>• On-demand + Batch"]
-        M_Trace --> M_Eval
-    end
-
-    subgraph BYO["BYO PATH"]
-        direction TB
-        B_Trace["CloudWatch Traces<br/>• In aws/spans log group<br/>• Queryable by session ID"]
-        B_Eval["AgentCore Evaluator (on-demand/batch)<br/>• Same built-in evaluators<br/>• Same custom evaluators<br/>• Fetch spans → evaluate() API<br/>• No online eval (manual trigger)"]
-        B_SDK["Local SDK Evaluator (optional)<br/>• InMemoryExporter (instant)<br/>• strands-agents-evals"]
-        B_Trace --> B_Eval
-        B_Trace --> B_SDK
-    end
-
-    M_Eval --> Registry["Agent Registry (unified)<br/>• Both paths update same registry<br/>• Cross-path comparison<br/>• Stale detection"]
-    B_Eval --> Registry
-    B_SDK --> Registry
-
-    style Managed fill:#E8F5E9,stroke:#82b366
-    style BYO fill:#E3F2FD,stroke:#6c8ebf
-    style Registry fill:#FFF3E0,stroke:#d79b00
-```
-
-### Evaluation Timing: When Does Each Step Happen?
-
-> ⚠️ **Note:** This timing table reflects the **old dual-evaluation approach**. With the unified path (Section 8.1), both managed and BYO agents are evaluated via the AgentCore Evaluate API after a configurable trace propagation delay (default 120s).
-
-| Step | Managed | BYO |
-|------|---------|-----|
-| Agent invocation | T+0s | T+0s |
-| Trace available in CloudWatch | T+10min (indexing) | T+10min (indexing) |
-| Online eval score available | T+12min (auto) | ❌ Not supported |
-| On-demand eval (`agentcore run eval`) | T+10min+ (after indexing) | ❌ Not supported |
-| ~~Local SDK eval score~~ | ~~T+0s (in-process)~~ | ~~T+0s (in-process)~~ *(deprecated)* |
-| **Unified eval score** | **T+2min (after wait)** | **T+2min (after wait)** |
-| Registry updated | T+0s (script) | T+0s (script) |
-
-**Practical implication:** The unified comparison script handles the wait automatically. For rapid iteration during development, the `--skip-invocation` flag allows re-evaluating previously captured sessions without re-invoking agents.
+![Evaluations Overview](screenshots/evaluations_overview.png)
 
 ---
 
@@ -1055,20 +1297,17 @@ cd edd-poc
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Run the unified 6-agent comparison (recommended)
-AWS_PROFILE=ml-sandbox AWS_REGION=us-east-1 \
-  .venv/bin/python scripts/run_unified_comparison.py
+# Deploy the trajectory evaluator (one-time, idempotent)
+python evaluators/deploy_trajectory_evaluator.py
 
-# With custom options
-.venv/bin/python scripts/run_unified_comparison.py \
-  --wait-seconds 180 \
-  --evaluators multiplier_domain_accuracy,Builtin.Helpfulness
+# Run the unified trajectory comparison (recommended — ~7 min)
+AWS_PROFILE=ml-sandbox python scripts/run_trajectory_comparison.py
 
-# Skip invocation (re-evaluate from previous run data)
-.venv/bin/python scripts/run_unified_comparison.py --skip-invocation
+# Custom wait time for trace propagation
+WAIT_SECONDS=180 python scripts/run_trajectory_comparison.py
 ```
 
-> **Note:** The old `scripts/run_registry_comparison.py` is deprecated. Use `scripts/run_unified_comparison.py` which evaluates both managed and BYO agents through the same AgentCore Evaluate API.
+> **Note:** The old `scripts/run_unified_comparison.py` and `scripts/run_registry_comparison.py` are deprecated. Use `scripts/run_trajectory_comparison.py` which evaluates both managed and BYO agents through the same code-based Lambda evaluator via the AgentCore Evaluate API.
 
 ### Individual Paths
 
