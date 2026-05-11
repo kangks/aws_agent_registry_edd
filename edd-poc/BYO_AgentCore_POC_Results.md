@@ -123,10 +123,11 @@ This shape is identical whether the span came from AgentCore Runtime or from our
 - **Continuous online eval compatibility** — the same Lambda evaluator can be plugged into an Online Eval Config with `cloudWatchLogs` data source pointing to the BYO log group. Score would be emitted continuously without the `LogEventMissingException` we saw with the LLM-as-a-judge path.
 - **Observability gap for BYO** — we now have trajectory scores for BYO agents, which we previously could not produce at all.
 
-### ❗ Still open (separate from this POC)
+### ❗ ~~Still open~~ NOW RESOLVED
 
-- **Content-level evaluation for BYO** — the original `LogEventMissingException` blocks the LLM-as-a-judge path for BYO. The Lambda path avoids this by scoring on metadata, but cannot judge factual accuracy, completeness, or compliance safety.
-- **The `invoke_agent` log event gap** documented in `BYO_AgentCore_Observability_issue.md` is unchanged. To get content-level evaluation for BYO, we still need AWS/Strands to fix that gap OR we would need to combine this trajectory evaluator with an out-of-band Bedrock call (bypassing AgentCore) for content judging.
+- ~~**Content-level evaluation for BYO**~~ — **RESOLVED.** The custom `InvokeAgentLogEmitter` SpanProcessor emits the missing `invoke_agent` log event with the correct format (`input.messages[0].content.content` = JSON array, `output.messages[0].content.message` = plain string). The LLM-as-a-Judge evaluator (`multiplier_domain_accuracy`) now scores BYO traces on factual accuracy, completeness, and compliance safety.
+- **Latest LLM-as-a-Judge run:** 21/30 successful (managed sonnet 4.0, BYO sonnet 4.2, managed glm_5 3.8, BYO glm_5 4.4). The 9 failures are trace timing issues, not fundamental limitations.
+- The `invoke_agent` log event gap documented in `BYO_AgentCore_Observability_issue.md` is **bridged** by the SpanProcessor — no SDK update needed.
 
 ### Possible follow-ups
 

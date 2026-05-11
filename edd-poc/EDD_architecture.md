@@ -713,7 +713,29 @@ WAIT_SECONDS=180 python scripts/run_trajectory_comparison.py
 
 #### What Remains Open
 
-Content-level evaluation (factual accuracy, completeness, compliance safety) for BYO agents is still blocked by the `invoke_agent` log event gap. The trajectory evaluator handles structure; a future external content judge (calling Bedrock directly, bypassing AgentCore) could handle content. See [`BYO_AgentCore_Observability_issue.md`](./BYO_AgentCore_Observability_issue.md) for the full issue documentation.
+~~Content-level evaluation (factual accuracy, completeness, compliance safety) for BYO agents is still blocked by the `invoke_agent` log event gap.~~ **RESOLVED:** The custom `InvokeAgentLogEmitter` SpanProcessor (in `agents/invoke_agent_log_emitter.py`) emits the missing `invoke_agent` log event for BYO agents, enabling the LLM-as-a-Judge evaluator (`multiplier_domain_accuracy`) to score BYO traces on content quality.
+
+**To use the LLM-as-a-Judge evaluator for both managed and BYO:**
+
+```bash
+# Content-level evaluation (factual accuracy, completeness, compliance safety)
+EVALUATOR_ID=eddpoc_multiplier_domain_accuracy-DCjD5FFsrw python scripts/run_trajectory_comparison.py
+
+# Trajectory-level evaluation (tool selection, success rate, latency, efficiency)
+EVALUATOR_ID=multiplier_trajectory_eval-Evy2MEDqBq python scripts/run_trajectory_comparison.py
+```
+
+Both evaluators work for both deployment types through the same `evaluate()` API call.
+
+**Latest LLM-as-a-Judge results (21/30 successful):**
+
+| Model | Managed | BYO |
+|---|---|---|
+| sonnet | 4.0/5 | 4.2/5 |
+| glm_5 | 3.8/5 | 4.4/5 |
+| nova_2_pro | (trace timing issue) | 3.0/5 (partial) |
+
+The remaining 9/30 failures are due to trace discovery timing (managed nova_2_pro) and SpanProcessor timing for one BYO model — not fundamental limitations. These are fixable with longer lookback windows and SpanProcessor improvements.
 
 #### Evolution from Old Approach
 

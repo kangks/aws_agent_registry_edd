@@ -112,8 +112,11 @@ class InvokeAgentLogEmitter(SpanProcessor):
             return
 
         # Build the log record body in the format the evaluator expects
-        # Based on testing: the evaluator needs content as {"content": "[{\"text\": ...}]"}
-        # for BOTH input and output messages (matching the managed agent sidecar format)
+        # CRITICAL FORMAT (verified from managed agent sidecar):
+        #   INPUT:  content: {"content": "[{\"text\": \"user query\"}]"}  (JSON array of blocks)
+        #   OUTPUT: content: {"message": "response text", "finish_reason": "end_turn"}
+        assistant_msg = str(self._last_assistant_message)[:10000]
+
         body = {
             "input": {
                 "messages": [
@@ -126,7 +129,7 @@ class InvokeAgentLogEmitter(SpanProcessor):
             "output": {
                 "messages": [
                     {
-                        "content": {"content": json.dumps([{"text": str(self._last_assistant_message)}])},
+                        "content": {"message": assistant_msg, "finish_reason": "end_turn"},
                         "role": "assistant",
                     }
                 ]

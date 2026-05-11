@@ -32,7 +32,7 @@ import boto3
 
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 PROFILE = os.environ.get("AWS_PROFILE", "ml-sandbox")
-EVALUATOR_ID = "multiplier_trajectory_eval-Evy2MEDqBq"
+EVALUATOR_ID = os.environ.get("EVALUATOR_ID", "multiplier_trajectory_eval-Evy2MEDqBq")
 WAIT_SECONDS = int(os.environ.get("WAIT_SECONDS", "120"))
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

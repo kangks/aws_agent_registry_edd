@@ -1,6 +1,18 @@
-# BYO Agent Evaluation Gap: Missing `invoke_agent` Log Event
+# BYO Agent Evaluation Gap: Missing `invoke_agent` Log Event — RESOLVED
 
-## Summary
+## Status: ✅ RESOLVED
+
+The gap has been bridged by the custom `InvokeAgentLogEmitter` SpanProcessor (`agents/invoke_agent_log_emitter.py`). This processor hooks into the OTEL pipeline and emits the missing `invoke_agent` log event when the agent span ends, enabling the AgentCore LLM-as-a-Judge evaluator to score BYO traces on content quality.
+
+**The fix:** The event body format must use:
+- Input: `content: {"content": "[{\"text\": \"user query\"}]"}` (JSON array of text blocks)
+- Output: `content: {"message": "response text", "finish_reason": "end_turn"}` (plain string)
+
+**Validated:** The `multiplier_domain_accuracy` evaluator scored a BYO trace **5.0 (Excellent)** with full content-level evaluation (factual accuracy, completeness, compliance safety).
+
+---
+
+## Original Issue (for reference)
 
 BYO agents running outside AgentCore Runtime cannot be evaluated by the AgentCore Evaluator (Online Eval, On-Demand Eval, or `agentcore run eval` CLI) because the `invoke_agent` span is missing its corresponding log event. This event is created by the AgentCore Runtime sidecar for managed agents but is NOT emitted by the Strands SDK or ADOT instrumentation for BYO agents.
 
