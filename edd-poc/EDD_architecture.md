@@ -430,7 +430,7 @@ opentelemetry-instrument python agents/byo_runner.py --model sonnet --prompt "..
 | **OTEL setup** | Automatic (sidecar) | Manual (env vars + `opentelemetry-instrument`) |
 | **Spans destination** | `aws/spans` | `aws/spans` |
 | **Events destination** | `/aws/bedrock-agentcore/runtimes/{runtimeId}-DEFAULT` | `/aws/bedrock-agentcore/runtimes/{service-name}` |
-| **`invoke_agent` log event** | ✅ Created by sidecar | ❌ Not created (Strands SDK gap) |
+| **`invoke_agent` log event** | ✅ Created by sidecar | ✅ Created by InvokeAgentLogEmitter SpanProcessor |
 | **`chat` span events** | ✅ Present | ✅ Present |
 | **`execute_tool` span events** | ✅ Present | ✅ Present |
 | **`service.name`** | `eddpoc_{runtime_name}.DEFAULT` | Custom (e.g., `multiplier-byo-sonnet`) |
@@ -447,6 +447,7 @@ sequenceDiagram
     participant BYO as BYO Agent<br/>(Your Compute + ADOT)
     participant Sidecar as OTEL Sidecar<br/>(Runtime only)
     participant ADOT as ADOT Exporter<br/>(BYO only)
+    participant Emitter as InvokeAgentLogEmitter<br/>(BYO SpanProcessor)
     participant CW_Spans as CloudWatch<br/>aws/spans
     participant CW_Events as CloudWatch<br/>Agent Log Group
 
@@ -463,18 +464,22 @@ sequenceDiagram
     end
 
     rect rgb(227, 242, 253)
-    Note over User,CW_Events: BYO PATH
+    Note over User,CW_Events: BYO PATH (with InvokeAgentLogEmitter)
     User->>BYO: opentelemetry-instrument python byo_runner.py --prompt "prompt"
     activate BYO
     BYO->>BYO: Strands SDK executes (invoke_agent → chat → tools → chat)
     BYO-->>User: response
     deactivate BYO
     BYO->>ADOT: Spans + events (in-process)
+    BYO->>Emitter: invoke_agent span ends → trigger
+    Emitter->>ADOT: Emit invoke_agent log record (input + output)
     ADOT->>CW_Spans: Export spans (OTLP/HTTP)
-    ADOT->>CW_Events: Export chat/tool events (OTEL_EXPORTER_OTLP_LOGS_HEADERS)
-    Note over CW_Events: ⚠️ No invoke_agent event<br/>(sidecar not present)
+    ADOT->>CW_Events: Export chat/tool events + invoke_agent event
+    Note over CW_Events: ✅ invoke_agent event present<br/>(emitted by InvokeAgentLogEmitter)
     end
 ```
+
+**Key change from earlier architecture:** The `InvokeAgentLogEmitter` SpanProcessor bridges the gap between BYO agents and the AgentCore Online Evaluation service. It watches for the `invoke_agent` span to end, then emits a log record with the user query and assistant response in the exact format the sidecar would produce. This enables BYO agents to participate in Online Evaluation alongside managed agents.
 
 ### 7.5 OpenTelemetry Trace Structure
 
@@ -748,6 +753,174 @@ The remaining 9/30 failures are due to trace discovery timing (managed nova_2_pr
 | Scores comparable? | ❌ | ❌ (BYO fails) | ✅ |
 | Evaluator type | Mixed | LLM-as-a-Judge | Code-based (Lambda) |
 | Scores on | Content + structure | Content | Structure (metadata only) |
+
+### 8.2 AgentCore Online Evaluation (LLM-as-a-Judge — Production Path)
+
+> **Status: ✅ Deployed and scoring.** This is the **production evaluation architecture** — the core of the EDD loop. Online Evaluation continuously scores every agent invocation using the LLM-as-a-Judge evaluator, with no manual intervention required.
+
+#### What is Online Evaluation?
+
+AgentCore Online Evaluation is a **continuous, automatic** evaluation system that:
+1. Monitors agent log groups for new sessions (detected after 15 min idle timeout)
+2. Extracts the `invoke_agent` log event (user query + agent response)
+3. Invokes the configured evaluator (LLM-as-a-Judge) to score the session
+4. Writes results to an output log group, visible in the CloudWatch GenAI Observability dashboard
+
+Unlike the on-demand `evaluate()` API (used by the trajectory evaluator), Online Evaluation requires **zero orchestration** — it runs continuously in the background at the configured sampling rate.
+
+#### How It Works for Managed Agents
+
+For managed agents, the AgentCore Runtime sidecar automatically emits the `invoke_agent` log event. The Online Eval Config simply points to the runtime's log group:
+
+```json
+{
+  "name": "eval_sonnet",
+  "agent": "multiplier_hr_sonnet",
+  "evaluators": ["multiplier_domain_accuracy"],
+  "samplingRate": 100,
+  "enableOnCreate": true
+}
+```
+
+This is deployed via the `agentcore.json` configuration file alongside the agent runtime.
+
+#### How It Works for BYO Agents
+
+For BYO agents, two components are required:
+
+1. **The `InvokeAgentLogEmitter` SpanProcessor** — emits the `invoke_agent` log event that the sidecar would normally create
+2. **An Online Eval Config** — created via boto3, pointing to the BYO agent's log group
+
+```python
+# Create Online Eval Config for a BYO agent
+client.create_online_evaluation_config(
+    onlineEvaluationConfigName="eddpoc_eval_byo_sonnet",
+    dataSourceConfig={
+        "cloudWatchLogs": {
+            "logGroupNames": ["/aws/bedrock-agentcore/runtimes/multiplier-byo-sonnet"],
+            "serviceNames": ["multiplier-byo-sonnet"]
+        }
+    },
+    evaluators=[{"evaluatorId": "eddpoc_multiplier_domain_accuracy-DCjD5FFsrw"}],
+    rule={"samplingConfig": {"samplingPercentage": 100.0}},
+    evaluationExecutionRoleArn="arn:aws:iam::654654616949:role/AgentCore-eddpoc-default-ApplicationOnlineEvalEvalG-s8xB4FXYroXg",
+    enableOnCreate=True,
+)
+```
+
+#### The Critical `invoke_agent` Log Event Format
+
+The Online Evaluation service expects a specific log event format in the agent's log group. This format was **discovered empirically** by examining what the managed agent sidecar produces:
+
+```json
+{
+  "scope": {"name": "strands.telemetry.tracer"},
+  "spanId": "<must match the invoke_agent span's spanId>",
+  "traceId": "<trace ID>",
+  "timeUnixNano": 1778310572000000000,
+  "observedTimeUnixNano": 1778310572000000000,
+  "severityNumber": 9,
+  "body": {
+    "input": {
+      "messages": [
+        {"content": {"content": "[{\"text\": \"user query here\"}]"}, "role": "user"}
+      ]
+    },
+    "output": {
+      "messages": [
+        {"content": {"message": "assistant response text here", "finish_reason": "end_turn"}, "role": "assistant"}
+      ]
+    }
+  },
+  "attributes": {
+    "event.name": "strands.telemetry.tracer",
+    "session.id": "session-id-here"
+  }
+}
+```
+
+**Critical format details:**
+- **Input `content`:** `{"content": "[{\"text\": \"user query\"}]"}` — a JSON-serialized array of text blocks (NOT a plain string)
+- **Output `content`:** `{"message": "response text", "finish_reason": "end_turn"}` — a plain string message with finish reason (NOT a JSON array)
+- **`spanId`:** Must match the `invoke_agent` span's spanId for correlation
+- **`scope.name`:** Must be `strands.telemetry.tracer`
+
+#### Online Evaluation Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant Agent as Agent<br/>(Managed or BYO)
+    participant OTEL as OTEL Pipeline<br/>(Sidecar or ADOT+Emitter)
+    participant CW_Spans as CloudWatch<br/>aws/spans
+    participant CW_Events as CloudWatch<br/>Agent Log Group
+    participant OnlineEval as Online Evaluation<br/>Service
+    participant Judge as LLM-as-a-Judge<br/>(multiplier_domain_accuracy)
+    participant CW_Output as CloudWatch<br/>Eval Output Log Group
+    participant Dashboard as CloudWatch<br/>GenAI Dashboard
+
+    Note over Agent,Dashboard: CONTINUOUS ONLINE EVALUATION (every invocation)
+
+    Agent->>Agent: Process user query → generate response
+    Agent->>OTEL: Spans + invoke_agent log event
+    OTEL->>CW_Spans: Export spans (OTLP)
+    OTEL->>CW_Events: Export log events (including invoke_agent)
+
+    Note over OnlineEval: Session idle timeout (15 min)
+
+    CW_Events->>OnlineEval: Session detected (invoke_agent event found)
+    OnlineEval->>OnlineEval: Extract user query + agent response<br/>from invoke_agent event body
+    OnlineEval->>Judge: Score on rubric:<br/>1) Factual Accuracy<br/>2) Completeness<br/>3) Compliance Safety
+    Judge-->>OnlineEval: Score: 4.2/5 with explanation
+
+    OnlineEval->>CW_Output: Write eval result to output log group
+    OnlineEval->>Dashboard: Score visible in evaluations tab
+
+    Note over Dashboard: Scores accumulate over time<br/>→ Feed back to Agent Registry
+```
+
+#### Deployed Online Eval Configs
+
+| Config ID | Agent | Type | Log Group |
+|---|---|---|---|
+| `eddpoc_eval_sonnet-D6R6FHCa6w` | multiplier_hr_sonnet | Managed | `/aws/bedrock-agentcore/runtimes/eddpoc_multiplier_hr_sonnet-5YhsT625tI-DEFAULT` |
+| `eddpoc_eval_nova_2_pro-taaTtC7VN4` | multiplier_hr_nova_2_pro | Managed | `/aws/bedrock-agentcore/runtimes/eddpoc_multiplier_hr_nova_2_pro-...-DEFAULT` |
+| `eddpoc_eval_glm_5-eBX7lw3Kpg` | multiplier_hr_glm_5 | Managed | `/aws/bedrock-agentcore/runtimes/eddpoc_multiplier_hr_glm_5-...-DEFAULT` |
+| `eddpoc_eval_byo_sonnet-AVImd57apu` | multiplier-byo-sonnet | BYO | `/aws/bedrock-agentcore/runtimes/multiplier-byo-sonnet` |
+| `eddpoc_eval_byo_nova_2_pro-UGf4Dw79AU` | multiplier-byo-nova_2_pro | BYO | `/aws/bedrock-agentcore/runtimes/multiplier-byo-nova_2_pro` |
+| `eddpoc_eval_byo_glm_5-ujF6o573Ll` | multiplier-byo-glm_5 | BYO | `/aws/bedrock-agentcore/runtimes/multiplier-byo-glm_5` |
+
+#### Latest Online Evaluation Results
+
+| Model | Managed Score | BYO Score |
+|---|---|---|
+| sonnet | 4.0/5 | 4.2/5 |
+| glm_5 | 3.8/5 | 4.4/5 |
+| nova_2_pro | (pending) | (pending) |
+
+#### Screenshots
+
+- ![AgentCore Online Evaluations](screenshots/agentcore_online_evaluations.png) — Online Evaluation configs in the AgentCore console
+- ![Evaluation Configs](screenshots/agentcore_eval_configs.png) — Evaluation configurations tab
+- ![Custom Evaluators](screenshots/agentcore_custom_evaluators.png) — Custom evaluators tab
+- ![Agent Evaluation Scores](screenshots/cw_agent_evaluations_sonnet.png) — Scores visible in CloudWatch GenAI dashboard
+- ![GenAI Observability Agents](screenshots/cw_genai_observability_agents.png) — All agents visible in CloudWatch
+
+#### How This Feeds Back to the Agent Registry (The EDD Loop)
+
+The Online Evaluation scores complete the EDD loop:
+
+1. **Agent Registry** defines which agents to deploy and their configurations
+2. **Agents are deployed** (managed to AgentCore Runtime, BYO to your compute)
+3. **Every invocation** produces OTEL telemetry → CloudWatch
+4. **Online Evaluation** continuously scores sessions using LLM-as-a-Judge
+5. **Scores accumulate** in CloudWatch GenAI Observability dashboard
+6. **Scores feed back** to the Agent Registry (currently manual review, future: automated quality gates)
+
+This creates a continuous quality feedback loop where:
+- Model regressions are detected automatically (score drops)
+- Model comparisons are data-driven (same rubric, same evaluator)
+- Prompt changes can be A/B tested (compare scores before/after)
+- Quality gates can block deployments (minimum score threshold)
 
 ---
 
@@ -1232,7 +1405,53 @@ sequenceDiagram
 
 **Why this doesn't work for BYO:** Step 4 requires the sidecar to create the `invoke_agent` log event. Without it, Step 6 fails with `LogEventMissingException`. See [`BYO_AgentCore_Observability_issue.md`](./BYO_AgentCore_Observability_issue.md).
 
+> **UPDATE:** This limitation is now **resolved** for BYO agents using the `InvokeAgentLogEmitter` SpanProcessor. See Section 8.2 for the unified Online Evaluation architecture that works for both managed and BYO agents.
+
 ![Evaluations Overview](screenshots/evaluations_overview.png)
+
+### 10.5 Unified Online Evaluation — The EDD Loop (LLM-as-a-Judge for Both Paths)
+
+> **This is the production architecture.** Both managed and BYO agents are continuously scored by the same LLM-as-a-Judge evaluator via AgentCore Online Evaluation.
+
+```mermaid
+sequenceDiagram
+    participant Registry as Agent Registry
+    participant Managed as Managed Agents<br/>(AgentCore Runtime)
+    participant BYO as BYO Agents<br/>(Your Compute + ADOT)
+    participant CW as CloudWatch<br/>(aws/spans + log groups)
+    participant OnlineEval as Online Evaluation<br/>(LLM-as-a-Judge)
+    participant Dashboard as CloudWatch<br/>GenAI Dashboard
+
+    Note over Registry,Dashboard: THE EDD LOOP (continuous)
+
+    Registry->>Managed: Deploy 3 managed agents
+    Registry->>BYO: Configure 3 BYO agents
+
+    loop Every agent invocation
+        Managed->>CW: OTEL spans + invoke_agent event (sidecar)
+        BYO->>CW: OTEL spans + invoke_agent event (SpanProcessor)
+    end
+
+    loop Online Eval (continuous, 100% sampling)
+        CW->>OnlineEval: Session detected (15 min idle timeout)
+        OnlineEval->>OnlineEval: LLM-as-a-Judge scores on rubric<br/>(factual accuracy, completeness, compliance safety)
+        OnlineEval->>CW: Write eval result to output log group
+        OnlineEval->>Dashboard: Score visible in evaluations tab
+    end
+
+    Dashboard->>Registry: Scores feed back (manual or automated)
+    Note over Registry: Track quality over time<br/>Compare models<br/>Detect regressions
+```
+
+**Key architectural points:**
+
+1. **Same evaluator for both paths:** `multiplier_domain_accuracy` (ID: `eddpoc_multiplier_domain_accuracy-DCjD5FFsrw`) scores both managed and BYO agents on the same rubric
+2. **Same data format:** Both paths produce the `invoke_agent` log event in identical format — managed via sidecar, BYO via `InvokeAgentLogEmitter`
+3. **Zero orchestration:** Unlike the trajectory evaluator (which requires a script to call `evaluate()`), Online Evaluation runs continuously with no manual intervention
+4. **100% sampling:** Every invocation is scored, providing complete quality coverage
+5. **Feedback loop:** Scores accumulate in CloudWatch and feed back to the Agent Registry for model selection decisions
+
+**This completes the EDD vision:** agents are deployed, observed, evaluated, and improved in a continuous loop — all driven by quantitative scores rather than manual testing.
 
 ---
 

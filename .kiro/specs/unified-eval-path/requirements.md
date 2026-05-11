@@ -2,13 +2,26 @@
 
 ## Introduction
 
-The Unified Eval Path feature replaces the previous dual-evaluation architecture with a **single AgentCore code-based (Lambda) evaluator** that scores both managed (AgentCore Runtime) and BYO (Bring-Your-Own, Strands + ADOT outside AgentCore) agents.
+The Unified Eval Path feature provides **two complementary evaluators** that score both managed (AgentCore Runtime) and BYO (Bring-Your-Own, Strands + ADOT outside AgentCore) agents:
 
-Previously, managed agents were evaluated via `agentcore run eval` (CLI-based) while BYO agents used the in-memory `strands-agents-evals` SDK. An intermediate attempt to unify both via the LLM-as-a-Judge evaluator (`multiplier_domain_accuracy`) was blocked for BYO agents by `LogEventMissingException` — the AgentCore Evaluate service requires an `invoke_agent` log event that the AgentCore Runtime sidecar emits but the Strands SDK does not. This is documented in `BYO_AgentCore_Observability_issue.md`.
+1. **PRIMARY: AgentCore Online Evaluation with LLM-as-a-Judge** (`multiplier_domain_accuracy`, ID: `eddpoc_multiplier_domain_accuracy-DCjD5FFsrw`) — continuous, automatic, 100% sampling. Scores content quality (factual accuracy, completeness, compliance safety) on a 1–5 scale. This is the **production evaluation path** and the core of the EDD loop.
 
-The POC in `BYO_AgentCore_POC_Results.md` proved the working path: **an AgentCore code-based evaluator (AWS Lambda) scores both deployment types through the same `evaluate()` API call, producing directly comparable trajectory scores.** The Lambda evaluator inspects span METADATA only (the service strips event bodies before invoking Lambda), so it scores on trajectory structure — tool selection, tool success rate, tool variety, error-free execution, latency, and efficiency — rather than content quality. Because both deployment types normalize to the same span metadata shape when processed by the service, the same Lambda scores both at parity.
+2. **SECONDARY: Code-based (Lambda) Trajectory Evaluator** (`multiplier_trajectory_eval`, ID: `multiplier_trajectory_eval-Evy2MEDqBq`) — on-demand via the `evaluate()` API. Scores trajectory structure (tool selection, success rate, variety, latency, efficiency) on a 0.0–1.0 scale.
 
-A **single comparator** (`scripts/run_trajectory_comparison.py`) invokes all agents, calls the `evaluate()` API once per session with the Lambda evaluator, and produces a single comparison report.
+**The EDD Loop (production architecture):**
+```
+Agent Registry → Deploy Agents → OTEL to CloudWatch → AgentCore Online Evaluation (LLM-as-a-Judge, continuous) → Scores feed back to Registry
+```
+
+Previously, the LLM-as-a-Judge path was blocked for BYO agents by `LogEventMissingException` — the AgentCore Online Evaluation requires an `invoke_agent` log event that the AgentCore Runtime sidecar emits but the Strands SDK does not. This gap was **resolved** by the custom `InvokeAgentLogEmitter` SpanProcessor (`agents/invoke_agent_log_emitter.py`), which emits the missing log event for BYO agents in the exact format the evaluator expects.
+
+**Online Eval Configs deployed (all at 100% sampling):**
+- Managed: `eddpoc_eval_sonnet-D6R6FHCa6w`, `eddpoc_eval_nova_2_pro-taaTtC7VN4`, `eddpoc_eval_glm_5-eBX7lw3Kpg`
+- BYO: `eddpoc_eval_byo_sonnet-AVImd57apu`, `eddpoc_eval_byo_nova_2_pro-UGf4Dw79AU`, `eddpoc_eval_byo_glm_5-ujF6o573Ll`
+
+**Latest LLM-as-a-Judge results:** managed sonnet 4.0/5, BYO sonnet 4.2/5, managed glm_5 3.8/5, BYO glm_5 4.4/5.
+
+A **single comparator** (`scripts/run_trajectory_comparison.py`) invokes all agents, calls the `evaluate()` API once per session with either evaluator, and produces a single comparison report.
 
 ## Glossary
 
@@ -26,19 +39,31 @@ A **single comparator** (`scripts/run_trajectory_comparison.py`) invokes all age
 
 ## Requirements
 
-### Requirement 1: Single Evaluator Deployment
+### Requirement 1: Dual Evaluator Deployment (LLM-as-a-Judge PRIMARY + Trajectory SECONDARY)
 
-**User Story:** As a developer, I want one evaluator artifact (an AWS Lambda function registered as an AgentCore code-based evaluator) that can score any agent — managed or BYO — so there is a single source of truth for scoring.
+**User Story:** As a developer, I want a primary LLM-as-a-Judge evaluator deployed as an AgentCore Online Evaluation that continuously scores content quality for ALL agents (managed and BYO), plus a secondary code-based Lambda evaluator for trajectory structure scoring, so I have both content-level and structural quality signals.
 
 #### Acceptance Criteria
 
-1. THE system SHALL include an AWS Lambda function named `eddpoc-trajectory-evaluator` with runtime `python3.11`.
-2. THE Lambda SHALL implement the AgentCore code-based evaluator Lambda contract: accept `{schemaVersion, evaluatorId, evaluationLevel, evaluationInput.sessionSpans, evaluationTarget}` and return `{label, value, explanation}` on success or `{errorCode, errorMessage}` on error.
-3. THE Lambda SHALL be granted invoke permission to the service principal `bedrock-agentcore.amazonaws.com` via `lambda:AddPermission`.
-4. THE Lambda's execution role SHALL include `bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream`, and `logs:CreateLogGroup/Stream/PutLogEvents` permissions.
-5. THE Lambda SHALL be registered as an AgentCore evaluator via `create_evaluator(level="TRACE", evaluatorConfig={codeBased: {lambdaConfig: {...}}})` with evaluator name `multiplier_trajectory_eval`.
-6. THE Lambda, its execution role, and the evaluator SHALL be tagged with `app=multiplier-hr-agent`, `project=eddpoc`, and `env=dev`.
-7. THE system SHALL provide an idempotent deployment script (`evaluators/deploy_trajectory_evaluator.py`) that creates or updates the role, Lambda, permission, and evaluator in a single run.
+**PRIMARY — LLM-as-a-Judge Online Evaluator (`multiplier_domain_accuracy`):**
+
+1. THE system SHALL include a custom LLM-as-a-Judge evaluator named `multiplier_domain_accuracy` (ID: `eddpoc_multiplier_domain_accuracy-DCjD5FFsrw`) that scores agent responses on factual accuracy, completeness, and compliance safety using a 1–5 rubric.
+2. THE evaluator SHALL be deployed as an AgentCore Online Evaluation with 100% sampling rate, enabling continuous automatic scoring of every agent invocation.
+3. THE system SHALL have Online Eval Configs for all managed agents: `eddpoc_eval_sonnet-D6R6FHCa6w`, `eddpoc_eval_nova_2_pro-taaTtC7VN4`, `eddpoc_eval_glm_5-eBX7lw3Kpg`.
+4. THE system SHALL have Online Eval Configs for all BYO agents: `eddpoc_eval_byo_sonnet-AVImd57apu`, `eddpoc_eval_byo_nova_2_pro-UGf4Dw79AU`, `eddpoc_eval_byo_glm_5-ujF6o573Ll`.
+5. THE Online Eval Configs for managed agents SHALL point to the runtime log group (e.g., `/aws/bedrock-agentcore/runtimes/eddpoc_multiplier_hr_sonnet-5YhsT625tI-DEFAULT`).
+6. THE Online Eval Configs for BYO agents SHALL point to the BYO log group (e.g., `/aws/bedrock-agentcore/runtimes/multiplier-byo-sonnet`) and SHALL require the `InvokeAgentLogEmitter` SpanProcessor to emit the `invoke_agent` log event.
+7. THE evaluation results SHALL be visible in the CloudWatch GenAI Observability dashboard under the agent evaluations tab.
+
+**SECONDARY — Code-Based Trajectory Evaluator (`multiplier_trajectory_eval`):**
+
+8. THE system SHALL include an AWS Lambda function named `eddpoc-trajectory-evaluator` with runtime `python3.11`.
+9. THE Lambda SHALL implement the AgentCore code-based evaluator Lambda contract: accept `{schemaVersion, evaluatorId, evaluationLevel, evaluationInput.sessionSpans, evaluationTarget}` and return `{label, value, explanation}` on success or `{errorCode, errorMessage}` on error.
+10. THE Lambda SHALL be granted invoke permission to the service principal `bedrock-agentcore.amazonaws.com` via `lambda:AddPermission`.
+11. THE Lambda's execution role SHALL include `bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream`, and `logs:CreateLogGroup/Stream/PutLogEvents` permissions.
+12. THE Lambda SHALL be registered as an AgentCore evaluator via `create_evaluator(level="TRACE", evaluatorConfig={codeBased: {lambdaConfig: {...}}})` with evaluator name `multiplier_trajectory_eval`.
+13. THE Lambda, its execution role, and the evaluator SHALL be tagged with `app=multiplier-hr-agent`, `project=eddpoc`, and `env=dev`.
+14. THE system SHALL provide an idempotent deployment script (`evaluators/deploy_trajectory_evaluator.py`) that creates or updates the role, Lambda, permission, and evaluator in a single run.
 
 ### Requirement 2: Trajectory Scoring Rubric
 
@@ -141,10 +166,28 @@ A **single comparator** (`scripts/run_trajectory_comparison.py`) invokes all age
 4. IF `evaluate()` raises an exception, THEN THE Comparator_Script SHALL catch it, record the exception type and message on the Evaluation record, and continue with remaining evaluations.
 5. THE Comparator_Script SHALL save `results/trajectory_invocations.json` and `results/trajectory_evaluations.json` unconditionally at the end of their phases so partial progress is always inspectable.
 
+### Requirement 9: InvokeAgentLogEmitter SpanProcessor for BYO Online Evaluation
+
+**User Story:** As a developer deploying BYO agents, I want a custom SpanProcessor that emits the `invoke_agent` log event in the exact format the AgentCore Online Evaluation expects, so my BYO agents can participate in continuous LLM-as-a-Judge scoring alongside managed agents.
+
+#### Acceptance Criteria
+
+1. THE system SHALL include a custom OpenTelemetry SpanProcessor (`agents/invoke_agent_log_emitter.py`) named `InvokeAgentLogEmitter` that emits an `invoke_agent` log record when the agent's `invoke_agent` span ends.
+2. THE `InvokeAgentLogEmitter` SHALL emit the log record with scope name `strands.telemetry.tracer` and `spanId` matching the `invoke_agent` span's spanId, so the Online Evaluation service can correlate the log event with the correct trace.
+3. THE log record body SHALL use the following critical format (discovered empirically from managed agent sidecar behavior):
+   - **Input:** `content: {"content": "[{\"text\": \"user query\"}]"}` — a JSON-serialized array of text blocks
+   - **Output:** `content: {"message": "response text", "finish_reason": "end_turn"}` — a plain string message with finish reason
+4. THE `InvokeAgentLogEmitter` SHALL capture the user query from the `_BYO_USER_QUERY` environment variable (set by `byo_runner.py` before agent invocation).
+5. THE `InvokeAgentLogEmitter` SHALL capture the assistant response from the `invoke_agent` span's events (gen_ai.choice or gen_ai.client.inference.operation.details).
+6. THE `InvokeAgentLogEmitter` SHALL emit the log record via the OTEL LoggerProvider so it is exported to the BYO agent's CloudWatch log group alongside other span events.
+7. THE `byo_runner.py` SHALL call `invoke_agent_log_emitter.install()` after ADOT initializes the TracerProvider, ensuring the SpanProcessor is active before agent invocation.
+8. THE log record SHALL include `attributes.session.id` matching the session ID set via OTEL baggage, enabling the Online Evaluation service to group events into sessions.
+9. WITHOUT the `InvokeAgentLogEmitter` installed, BYO agents SHALL NOT be eligible for Online Evaluation (the service will not find the required `invoke_agent` log event and will skip the session).
+
 ## Out of Scope
 
 The following items are intentionally excluded from this feature and remain tracked elsewhere:
 
-- **Content-level evaluation for BYO agents** — judging factual accuracy, completeness, or compliance safety requires the LLM-as-a-Judge path, which is blocked by the `invoke_agent` log event gap for BYO agents (see `BYO_AgentCore_Observability_issue.md`).
-- **Updating local `registry/registry.json` or the AWS Agent Registry** with trajectory scores — this was in scope for the earlier revision; if needed, it can be added as a follow-up feature.
-- **Online Eval Config wiring for the Trajectory_Evaluator** — continuous evaluation via `CreateOnlineEvaluationConfig` is a follow-up and not part of this feature.
+- ~~**Content-level evaluation for BYO agents**~~ — **RESOLVED.** The `InvokeAgentLogEmitter` SpanProcessor emits the missing `invoke_agent` log event, enabling the LLM-as-a-Judge evaluator to score BYO agents on content quality via Online Evaluation.
+- **Updating local `registry/registry.json` or the AWS Agent Registry** with evaluation scores automatically — scores are currently viewed in the CloudWatch GenAI Observability dashboard and can be manually fed back to the registry. Automated feedback is a follow-up feature.
+- ~~**Online Eval Config wiring for the Trajectory_Evaluator**~~ — Online Evaluation is deployed for the LLM-as-a-Judge evaluator (the primary evaluator). The trajectory evaluator remains on-demand via the `evaluate()` API.

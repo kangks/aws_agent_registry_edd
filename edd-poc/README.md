@@ -9,7 +9,7 @@ Think of it like Test Driven Development, but for AI agents: you define what "go
 **The core loop:**
 
 ```
-Define Evaluators → Run Agent → Capture Traces → Score Traces → Compare → Iterate
+Agent Registry → Deploy Agents → OTEL to CloudWatch → Online Evaluation (LLM-as-a-Judge) → Scores feed back to Registry
 ```
 
 ---
@@ -108,8 +108,9 @@ agent.invoke (root span)
 - Agent runs on your compute (EC2, ECS, Lambda, local machine)
 - ADOT (`aws-opentelemetry-distro`) exports traces to CloudWatch/X-Ray
 - Traces visible in GenAI Observability dashboard
-- AgentCore evaluators NOT yet supported for BYO traces
-- Best for: existing infrastructure, gradual migration, observability without runtime lock-in
+- `InvokeAgentLogEmitter` SpanProcessor enables Online Evaluation for BYO agents
+- AgentCore evaluators supported via `evaluate()` API with sessionSpans
+- Best for: existing infrastructure, gradual migration, full evaluation parity with managed
 
 **Path 3: InMemorySpanExporter (local development)**
 - Traces captured in-process using `InMemorySpanExporter`
@@ -393,13 +394,11 @@ Generates: `results/byo_comparison.md` with helpfulness scores per model per pro
 | Agent runs on | AgentCore Runtime | Your machine / any compute |
 | Traces go to | CloudWatch (automatic) | CloudWatch via ADOT |
 | Visible in GenAI Observability | ✅ Yes | ✅ Yes |
-| AgentCore evaluator (`agentcore run eval`) | ✅ Works | ❌ Not supported yet |
+| AgentCore evaluator (`agentcore run eval`) | ✅ Works | ✅ Works (via `evaluate()` API) |
 | Local SDK evaluation (`strands-agents-evals`) | ✅ Works | ✅ Works |
-| Online eval (auto-scoring) | ✅ Supported | ❌ Not supported yet |
+| Online eval (auto-scoring) | ✅ Supported | ✅ Supported (with InvokeAgentLogEmitter) |
 
-**Key difference:** Both paths send traces to CloudWatch, and both appear in the GenAI Observability dashboard. However, the AgentCore evaluator (`agentcore run eval`) currently only discovers traces linked to a managed runtime ARN. BYO traces are visible in X-Ray but not discoverable by the evaluator.
-
-**Workaround for BYO evaluation:** Use `scripts/run_byo_comparison.py` which captures traces in-memory with `StrandsEvalsTelemetry` and evaluates locally using `HelpfulnessEvaluator` from `strands-agents-evals`. This produces the same quality scores without needing AgentCore Runtime.
+**Key achievement:** Both paths now support Online Evaluation via the LLM-as-a-Judge evaluator. The `InvokeAgentLogEmitter` SpanProcessor emits the `invoke_agent` log event that the Online Evaluation service requires, enabling BYO agents to be continuously scored alongside managed agents.
 
 #### BYO Results (Actual)
 
@@ -757,101 +756,155 @@ After each comparison run, `run_registry_comparison.py` automatically updates th
 
 ---
 
-## Unified Trajectory Evaluation (Implemented)
+## Unified Evaluation (The EDD Loop — Production Architecture)
 
-> **Status: ✅ Complete.** The unified evaluation path is fully implemented and validated. Both managed and BYO agents are scored by the **same Lambda evaluator** through the **same `evaluate()` API call**, producing directly comparable trajectory scores.
+> **Status: ✅ Deployed and scoring.** Both managed and BYO agents are continuously evaluated by the same LLM-as-a-Judge evaluator via AgentCore Online Evaluation. The trajectory evaluator provides supplementary structural scoring on-demand.
 
-### What It Does
+### The EDD Loop
 
-A single AgentCore code-based evaluator (`multiplier_trajectory_eval-Evy2MEDqBq`) scores agent trajectories on **metadata only** — tool selection, success rate, tool variety, error-free execution, latency, and efficiency. Because the AgentCore service normalizes spans before invoking the Lambda (stripping event bodies), the evaluator operates on span metadata that both managed and BYO agents emit identically.
+The production architecture is a continuous feedback loop:
 
-This replaces the old dual-evaluation approach where managed agents used `agentcore run eval` and BYO agents used in-memory `strands-agents-evals` SDK evaluation — two different scoring paths that produced incomparable results.
-
-### Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│              scripts/run_trajectory_comparison.py                     │
-│                      (Single Comparator)                             │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  ┌──────────────────────┐       ┌──────────────────────┐            │
-│  │  Managed Agents (3)   │       │  BYO Agents (3)       │            │
-│  │  agentcore invoke     │       │  opentelemetry-instr.  │            │
-│  └──────────┬───────────┘       └──────────┬───────────┘            │
-│             │                              │                         │
-│             ▼          SAME API            ▼                         │
-│  ┌──────────────────────────────────────────────────────┐            │
-│  │  agentcore.evaluate(                                  │            │
-│  │    evaluatorId="multiplier_trajectory_eval-Evy2MEDqBq"│            │
-│  │    evaluationInput={sessionSpans: [...]},             │            │
-│  │    evaluationTarget={traceIds: [...]})                │            │
-│  └──────────────────────────┬───────────────────────────┘            │
-│                             │                                        │
-│                             ▼                                        │
-│  ┌──────────────────────────────────────────────────────┐            │
-│  │  Lambda: eddpoc-trajectory-evaluator                   │            │
-│  │  → analyze_trajectory() → score_trajectory()          │            │
-│  │  → {label, value: 0.0-1.0, explanation}               │            │
-│  └──────────────────────────┬───────────────────────────┘            │
-│                             │                                        │
-│                             ▼                                        │
-│  ┌──────────────────────────────────────────────────────┐            │
-│  │  results/trajectory_comparison.md                      │            │
-│  └──────────────────────────────────────────────────────┘            │
-└─────────────────────────────────────────────────────────────────────┘
+Agent Registry → Deploy Agents → OTEL to CloudWatch → AgentCore Online Evaluation (LLM-as-a-Judge) → Scores feed back to Registry
 ```
 
-### Scoring Rubric (6 Criteria, 100 Points)
+```mermaid
+sequenceDiagram
+    participant Registry as Agent Registry
+    participant Managed as Managed Agents<br/>(AgentCore Runtime)
+    participant BYO as BYO Agents<br/>(Your Compute + ADOT)
+    participant CW as CloudWatch<br/>(aws/spans + log groups)
+    participant OnlineEval as Online Evaluation<br/>(LLM-as-a-Judge)
+    participant Dashboard as CloudWatch<br/>GenAI Dashboard
 
-| Criterion | Weight | What It Measures |
-|-----------|--------|------------------|
-| Agent presence | 20 | At least one `invoke_agent` strands span exists |
-| Tool success rate | 30 | Fraction of tool calls that succeeded |
-| Tool variety | 10 | 10 if ≥2 distinct tools used, 7 if 1, 0 if none |
-| Error-free execution | 15 | Deducts 5 per strands-scoped error span (floor 0) |
-| Latency | 15 | Linear decay from 15→5 as duration approaches 30s threshold |
-| Efficiency | 10 | 10 if tool calls ≤10 and LLM calls ≤8 and ≥1 exists |
+    Note over Registry,Dashboard: THE EDD LOOP (continuous)
 
-Score is normalized to 0.0–1.0 and mapped to labels: `≥0.90 Excellent`, `≥0.75 Very Good`, `≥0.60 Good`, `≥0.40 Poor`, `<0.40 Unacceptable`.
+    Registry->>Managed: Deploy 3 managed agents
+    Registry->>BYO: Configure 3 BYO agents
 
-### How to Deploy the Evaluator
+    loop Every agent invocation
+        Managed->>CW: OTEL spans + invoke_agent event (sidecar)
+        BYO->>CW: OTEL spans + invoke_agent event (SpanProcessor)
+    end
 
-```bash
-cd edd-poc
-source .venv/bin/activate
+    loop Online Eval (continuous, 100% sampling)
+        CW->>OnlineEval: Session detected (15 min idle timeout)
+        OnlineEval->>OnlineEval: LLM-as-a-Judge scores on rubric<br/>(factual accuracy, completeness, compliance safety)
+        OnlineEval->>CW: Write eval result to output log group
+        OnlineEval->>Dashboard: Score visible in evaluations tab
+    end
 
-# Deploy (creates/updates IAM role, Lambda, invoke permission, AgentCore evaluator)
-python evaluators/deploy_trajectory_evaluator.py
+    Dashboard->>Registry: Scores feed back (manual or automated)
+    Note over Registry: Track quality over time<br/>Compare models<br/>Detect regressions
 ```
 
-The script is idempotent — running it again updates existing resources without recreation.
+### Two Evaluators, Two Purposes
 
-### How to Run the Comparison
+| Evaluator | Type | Purpose | Scoring | Mode |
+|---|---|---|---|---|
+| `multiplier_domain_accuracy` | LLM-as-a-Judge | **Content quality** — factual accuracy, completeness, compliance safety | 1–5 scale | **Online Evaluation** (continuous, automatic) |
+| `multiplier_trajectory_eval` | Code-based Lambda | **Trajectory structure** — tool selection, success rate, latency, efficiency | 0.0–1.0 | On-demand via `evaluate()` API |
+
+The LLM-as-a-Judge evaluator is the **primary** evaluator — it answers "did the agent give a good answer?" The trajectory evaluator is **secondary** — it answers "did the agent follow a good process?"
+
+### Setting Up Online Evaluation for BYO Agents
+
+BYO agents require two components to participate in Online Evaluation:
+
+#### 1. Install the `InvokeAgentLogEmitter` SpanProcessor
+
+The AgentCore Online Evaluation service requires an `invoke_agent` log event in the agent's log group. For managed agents, the sidecar creates this automatically. For BYO agents, the `InvokeAgentLogEmitter` bridges this gap:
+
+```python
+# In your BYO agent runner (after ADOT initializes):
+from invoke_agent_log_emitter import install as install_log_emitter
+install_log_emitter()
+
+# Set the user query so the emitter can include it in the log record
+import os
+os.environ["_BYO_USER_QUERY"] = user_prompt
+```
+
+The emitter watches for the `invoke_agent` span to end, then emits a log record with the user query and assistant response in the exact format the evaluator expects:
+
+```json
+{
+  "body": {
+    "input": {"messages": [{"content": {"content": "[{\"text\": \"user query\"}]"}, "role": "user"}]},
+    "output": {"messages": [{"content": {"message": "response text", "finish_reason": "end_turn"}, "role": "assistant"}]}
+  }
+}
+```
+
+#### 2. Create an Online Eval Config
+
+```python
+import boto3
+client = boto3.client("bedrock-agentcore", region_name="us-east-1")
+
+client.create_online_evaluation_config(
+    onlineEvaluationConfigName="eddpoc_eval_byo_sonnet",
+    dataSourceConfig={
+        "cloudWatchLogs": {
+            "logGroupNames": ["/aws/bedrock-agentcore/runtimes/multiplier-byo-sonnet"],
+            "serviceNames": ["multiplier-byo-sonnet"]
+        }
+    },
+    evaluators=[{"evaluatorId": "eddpoc_multiplier_domain_accuracy-DCjD5FFsrw"}],
+    rule={"samplingConfig": {"samplingPercentage": 100.0}},
+    evaluationExecutionRoleArn="arn:aws:iam::654654616949:role/AgentCore-eddpoc-default-ApplicationOnlineEvalEvalG-s8xB4FXYroXg",
+    enableOnCreate=True,
+)
+```
+
+Once both are in place, every BYO agent invocation is automatically scored — no manual orchestration needed.
+
+### Viewing Results in CloudWatch GenAI Observability
+
+Evaluation scores are visible in the CloudWatch GenAI Observability dashboard:
+
+1. Navigate to **CloudWatch → Application Signals → GenAI Observability**
+2. Select your agent from the agents list
+3. Click the **Evaluations** tab to see scores over time
+
+![Agent Evaluation Scores](screenshots/cw_agent_evaluations_sonnet.png)
+
+### Online Eval Configs (Deployed)
+
+| Config | Agent | Type |
+|---|---|---|
+| `eddpoc_eval_sonnet-D6R6FHCa6w` | multiplier_hr_sonnet | Managed |
+| `eddpoc_eval_nova_2_pro-taaTtC7VN4` | multiplier_hr_nova_2_pro | Managed |
+| `eddpoc_eval_glm_5-eBX7lw3Kpg` | multiplier_hr_glm_5 | Managed |
+| `eddpoc_eval_byo_sonnet-AVImd57apu` | multiplier-byo-sonnet | BYO |
+| `eddpoc_eval_byo_nova_2_pro-UGf4Dw79AU` | multiplier-byo-nova_2_pro | BYO |
+| `eddpoc_eval_byo_glm_5-ujF6o573Ll` | multiplier-byo-glm_5 | BYO |
+
+### Latest LLM-as-a-Judge Results
+
+| Model | Managed Score | BYO Score |
+|---|---|---|
+| sonnet | 4.0/5 | 4.2/5 |
+| glm_5 | 3.8/5 | 4.4/5 |
+| nova_2_pro | (pending) | (pending) |
+
+### Running the Trajectory Evaluator (On-Demand)
+
+For structural scoring, use the trajectory comparison script:
 
 ```bash
 # Full run: invoke all 6 agents × 5 prompts, wait for traces, evaluate, generate report
 AWS_PROFILE=ml-sandbox python scripts/run_trajectory_comparison.py
 
+# Use LLM-as-a-Judge evaluator instead of trajectory evaluator
+EVALUATOR_ID=eddpoc_multiplier_domain_accuracy-DCjD5FFsrw python scripts/run_trajectory_comparison.py
+
 # Custom wait time (default 120s for trace propagation)
 WAIT_SECONDS=180 python scripts/run_trajectory_comparison.py
 ```
 
-**What it does:**
-1. **Phase 1 — Invocation:** Runs 6 agents in parallel (5 prompts each, sequential within-agent)
-2. **Phase 2 — Wait:** 120s for CloudWatch trace propagation
-3. **Phase 3 — Evaluate:** Discovers trace IDs from `aws/spans`, fetches spans, calls `evaluate()` with the same evaluator ID for every agent
-4. **Phase 4 — Report:** Generates `results/trajectory_comparison.md`
-
-### What the Report Contains
-
-- **Metadata** — timestamp, evaluator ID, success count, wall-clock time
-- **Summary table** — per-agent average scores and per-prompt scores
-- **Per-Model Parity** — managed vs BYO side-by-side for each model
-- **Per-Prompt Detail** — trace ID, score, label, full scoring breakdown
-- **Failures** — any failed evaluations with error reasons
-
-### Latest Results (30/30 Successful)
+### Trajectory Evaluator Results (30/30 Successful)
 
 | Deployment | Avg Score | Models |
 |---|---|---|
@@ -864,29 +917,21 @@ All 30 evaluations scored "Excellent" (≥0.90). Managed and BYO scores are with
 
 | Resource | Identifier |
 |---|---|
-| Lambda function | `eddpoc-trajectory-evaluator` |
-| Lambda ARN | `arn:aws:lambda:us-east-1:654654616949:function:eddpoc-trajectory-evaluator` |
+| LLM-as-a-Judge evaluator ID | `eddpoc_multiplier_domain_accuracy-DCjD5FFsrw` |
+| Trajectory evaluator Lambda | `eddpoc-trajectory-evaluator` |
+| Trajectory evaluator ID | `multiplier_trajectory_eval-Evy2MEDqBq` |
 | IAM role | `eddpoc-trajectory-evaluator-role` |
-| AgentCore evaluator ID | `multiplier_trajectory_eval-Evy2MEDqBq` |
 | Tags | `app=multiplier-hr-agent`, `project=eddpoc`, `env=dev` |
 
-### Key Technical Finding
-
-The AgentCore service **normalizes spans and strips event bodies** before invoking code-based evaluators. This means:
-- The Lambda cannot score on content (user query, assistant response, tool results)
-- The Lambda CAN score on trajectory structure (tool selection, success, latency, errors)
-- Both managed and BYO spans normalize to the same shape — enabling unified scoring
-
-Content-level evaluation (factual accuracy, completeness) for BYO agents remains blocked by the `invoke_agent` log event gap. See [`BYO_AgentCore_Observability_issue.md`](./BYO_AgentCore_Observability_issue.md) for details.
-
-### Previous Limitations (Now Resolved)
+### Previous Limitations (All Resolved)
 
 | Previous Limitation | Resolution |
 |---|---|
+| Content-level eval blocked for BYO agents | ✅ `InvokeAgentLogEmitter` emits the missing `invoke_agent` log event |
 | BYO traces not scorable by AgentCore evaluator | ✅ Code-based evaluator scores both via `evaluate(sessionSpans)` |
-| No cross-path comparison | ✅ Single comparator script produces unified report |
-| Different evaluators for managed vs BYO | ✅ Same evaluator ID, same API call, same rubric |
-| Incomparable scores | ✅ Directly comparable (same Lambda, same scale) |
+| No continuous evaluation for BYO | ✅ Online Eval Configs deployed for all 6 agents |
+| Different evaluators for managed vs BYO | ✅ Same LLM-as-a-Judge evaluator, same rubric, same Online Eval |
+| Incomparable scores | ✅ Directly comparable (same evaluator, same scale) |
 
 ---
 
