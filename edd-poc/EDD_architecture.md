@@ -98,10 +98,17 @@ BYO agents run on **your own compute** (local machine, EC2, Lambda, ECS) while s
 | Infrastructure | Zero (AWS managed) | You manage |
 | Traces go to | CloudWatch (automatic) | CloudWatch via ADOT |
 | Visible in GenAI Observability | ✅ Yes | ✅ Yes |
-| `agentcore run eval` | ✅ Works | ❌ Not yet supported |
-| Local SDK evaluation | ✅ Works | ✅ Works |
-| Online eval (auto-scoring) | ✅ Supported | ❌ Not yet supported |
+| **Unified evaluation path** | ✅ `evaluate(runtimeArn, sessionId)` | ✅ `evaluate(sessionSpans)` |
+| **Same evaluator, same scores** | ✅ AgentCore Evaluate API | ✅ AgentCore Evaluate API |
+| `agentcore run eval` (on-demand) | ✅ Works (auto-discovers sessions) | ✅ Works (query spans from `aws/spans` log group) |
+| `evaluate()` API (on-demand) | ✅ Works | ✅ Works (pass `sessionSpans` directly) |
+| Batch evaluation | ✅ Works | ✅ Works (point at CloudWatch log group) |
+| Online eval (auto-scoring) | ✅ Supported | ❌ Not supported |
+| ~~Local SDK evaluation~~ | ~~✅ Works~~ | ~~✅ Works~~ *(deprecated — see Section 8.1)* |
 | Latency overhead | ~5-8s (cold start) | None (direct invocation) |
+| **Scores directly comparable** | ✅ Yes | ✅ Yes |
+
+> **Note (Updated May 2026):** Both managed and BYO agents are now evaluated through the **same AgentCore Evaluate API** using the unified comparison script. The old dual-evaluation approach (in-memory SDK for BYO) is deprecated. See [Section 8.1: Unified Evaluation Path](#81-unified-evaluation-path) for details.
 
 ### Console Screenshot: All 6 Agents in CloudWatch
 
@@ -351,6 +358,165 @@ The most rigorous evaluation approach:
 2. **Contenders:** Run Haiku and Nova Pro with the same prompts
 3. **Score:** Use `CorrectnessEvaluator` to compare contender responses against Sonnet's (binary CORRECT/INCORRECT)
 4. **Rank:** Combine correctness + helpfulness + cost for final recommendation
+
+### 8.1 Unified Evaluation Path
+
+> **This section supersedes the dual-evaluation architecture described in Section 10.** The unified evaluation path replaces the old approach where managed agents used `agentcore run eval` (CLI-based) and BYO agents used in-memory `strands-agents-evals` SDK evaluation — two fundamentally different scoring paths that produced incomparable results.
+
+#### Why Unified?
+
+The previous dual-evaluation approach had a critical flaw: managed and BYO agents were scored by **different evaluators** using **different methodologies**. Managed agents were scored by the AgentCore Evaluate API (LLM-as-a-Judge on full traces), while BYO agents were scored by the local `strands-agents-evals` SDK (in-memory span mapping + local evaluators). This made cross-path comparison unreliable.
+
+The unified path ensures **both** managed and BYO agents are scored by the **same AgentCore Evaluate API** using the **same evaluators**, producing **directly comparable** results.
+
+#### Architecture: 4-Phase Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                   scripts/run_unified_comparison.py                       │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  Phase 1: Invocation (ThreadPoolExecutor, max_workers=6)                 │
+│  ┌──────────────────────────┐    ┌──────────────────────────┐            │
+│  │  Managed Agents (3)       │    │  BYO Agents (3)          │            │
+│  │  agentcore invoke         │    │  opentelemetry-instrument │            │
+│  │  → session_id             │    │  → service_name + ts     │            │
+│  └──────────┬───────────────┘    └──────────┬───────────────┘            │
+│             │                               │                            │
+│  Phase 2: Wait (configurable, default 120s)                              │
+│             │                               │                            │
+│  Phase 3: Evaluation (ThreadPoolExecutor)                                │
+│  ┌──────────▼───────────────┐    ┌──────────▼───────────────┐            │
+│  │  Managed Evaluator        │    │  BYO Span Retriever       │            │
+│  │  evaluate(                │    │  CW Logs Insights         │            │
+│  │    runtimeArn,            │    │  (aws/spans log group)    │            │
+│  │    sessionId)             │    │  → Session_Spans          │            │
+│  │                           │    │  → evaluate(              │            │
+│  │                           │    │      sessionSpans)        │            │
+│  └──────────┬───────────────┘    └──────────┬───────────────┘            │
+│             │                               │                            │
+│             ▼         SAME EVALUATOR         ▼                            │
+│  ┌──────────────────────────────────────────────────────────┐            │
+│  │  AgentCore Evaluate API                                   │            │
+│  │  evaluatorNames: ["multiplier_domain_accuracy", ...]      │            │
+│  └──────────────────────────────┬───────────────────────────┘            │
+│                                 │                                        │
+│  Phase 4: Report + Registry Update                                       │
+│  ┌──────────────────────────────▼───────────────────────────┐            │
+│  │  ReportGenerator                                          │            │
+│  │  → results/unified_comparison.md                          │            │
+│  │  → registry/registry.json (local)                         │            │
+│  │  → AWS Agent Registry (cloud)                             │            │
+│  └──────────────────────────────────────────────────────────┘            │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Unified Evaluation Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant Script as run_unified_comparison.py
+    participant Managed as Managed Agent<br/>(AgentCore Runtime)
+    participant BYO as BYO Agent<br/>(ADOT instrumented)
+    participant CW as CloudWatch<br/>(aws/spans log group)
+    participant Eval as AgentCore<br/>Evaluate API
+    participant Reg as Registry<br/>(local + AWS)
+
+    Note over Script: Phase 1: Invocation (parallel, max_workers=6)
+
+    par Invoke all 6 agents
+        Script->>Managed: agentcore invoke --runtime {name} {prompt}
+        Managed-->>Script: response + session_id
+    and
+        Script->>BYO: opentelemetry-instrument python byo_runner.py
+        BYO-->>Script: response (record service_name + timestamp)
+        BYO->>CW: ADOT exports spans (async)
+    end
+
+    Note over Script: Phase 2: Wait (default 120s for trace propagation)
+
+    Note over Script: Phase 3: Evaluation
+
+    Script->>CW: CloudWatch Logs Insights query<br/>(filter by service.name, timestamp)
+    CW-->>Script: BYO spans (Session_Spans format)
+
+    par Evaluate all agents via same API
+        Script->>Eval: evaluate(runtimeArn, sessionId, evaluatorNames)
+        Note over Eval: Score managed trace
+        Eval-->>Script: scores + justification
+    and
+        Script->>Eval: evaluate(sessionSpans, evaluatorNames)
+        Note over Eval: Score BYO trace
+        Eval-->>Script: scores + justification
+    end
+
+    Note over Script: Phase 4: Report + Registry Update
+
+    Script->>Script: Generate results/unified_comparison.md
+    Script->>Reg: Update local registry (avg scores)
+    Script->>Reg: Update AWS Agent Registry (best-effort)
+```
+
+#### Key Differences from Old Approach
+
+| Aspect | Old (Dual-Evaluation) | New (Unified Path) |
+|--------|----------------------|-------------------|
+| Managed evaluation | `agentcore run eval` CLI | `evaluate(runtimeArn, sessionId)` API |
+| BYO evaluation | In-memory `strands-agents-evals` SDK | `evaluate(sessionSpans)` API |
+| Evaluator used | Different per path | **Same** (`multiplier_domain_accuracy`) |
+| Scores comparable? | ❌ No (different methodologies) | ✅ Yes (same evaluator, same rubric) |
+| BYO span source | In-memory exporter (local) | CloudWatch `aws/spans` log group |
+| Script | `scripts/run_registry_comparison.py` | `scripts/run_unified_comparison.py` |
+
+#### How BYO Spans Are Retrieved
+
+BYO agents export their OTEL spans to CloudWatch via ADOT. The unified script retrieves these spans using CloudWatch Logs Insights:
+
+1. Query the `aws/spans` log group filtering by `service.name` resource attribute
+2. Time range: invocation start minus 60s (clock skew buffer) to invocation end plus 60s
+3. Parse log events into the `Session_Spans` JSON format expected by the Evaluate API
+4. Pass spans directly to `evaluate(sessionSpans=...)` — same evaluator scores them
+
+#### Unified Comparison Script
+
+**Script:** `scripts/run_unified_comparison.py`
+
+**CLI Usage:**
+
+```bash
+# Full run: invoke all 6 agents, wait, evaluate, generate report
+python scripts/run_unified_comparison.py
+
+# Custom wait time and evaluators
+python scripts/run_unified_comparison.py --wait-seconds 180 --evaluators multiplier_domain_accuracy,Builtin.Helpfulness
+
+# Skip invocation (use data from previous run)
+python scripts/run_unified_comparison.py --skip-invocation
+```
+
+**CLI Arguments:**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--wait-seconds N` | 120 | Trace propagation delay in seconds |
+| `--evaluators LIST` | `multiplier_domain_accuracy` | Comma-separated evaluator names |
+| `--skip-invocation` | false | Skip invocation phase, use intermediate data |
+
+**Environment Variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AWS_PROFILE` | `ml-sandbox` | AWS profile for boto3 clients |
+| `AWS_REGION` | `us-east-1` | AWS region for all API calls |
+
+**Output Files:**
+
+| File | Purpose |
+|------|---------|
+| `results/unified_comparison.md` | Final comparison report (scores, justifications, recommendations) |
+| `results/unified_intermediate.json` | Intermediate state for resumption on failure |
+| `registry/registry.json` | Local registry updated with average scores |
 
 ---
 
@@ -712,6 +878,8 @@ sequenceDiagram
 
 ### BYO Path: ADOT + Local SDK Evaluation
 
+> ⚠️ **DEPRECATED (May 2026):** The local SDK evaluation path described below has been superseded by the **Unified Evaluation Path** (Section 8.1). Both managed and BYO agents are now evaluated through the AgentCore Evaluate API using the same evaluators. The in-memory `strands-agents-evals` SDK approach is retained here for historical reference only. Use `scripts/run_unified_comparison.py` instead of the old `scripts/run_registry_comparison.py`.
+
 ```mermaid
 sequenceDiagram
     participant Client as Client<br/>(script / CLI)
@@ -748,31 +916,38 @@ sequenceDiagram
 
 **Key differences from Managed path:**
 - Step 4: ADOT (not sidecar) exports traces — requires env vars but no code changes
-- Steps 5-7: Evaluation happens **locally** via `strands-agents-evals` SDK, not via AgentCore
+- Steps 5-7: Evaluation can happen **locally** via `strands-agents-evals` SDK, OR via the AgentCore `evaluate()` API by fetching spans from CloudWatch
 - The `InMemorySpanExporter` captures spans in-process (parallel to ADOT export)
-- `StrandsInMemorySessionMapper` converts raw spans into structured sessions for evaluators
-- No online eval (auto-scoring) — must be triggered by script
+- `StrandsInMemorySessionMapper` converts raw spans into structured sessions for local evaluators
+- Online eval (auto-scoring) is not supported — but **on-demand** and **batch** evaluation work by querying spans from CloudWatch's `aws/spans` log group
+
+> **Note:** The AgentCore `evaluate()` API accepts raw `sessionSpans` as input regardless of where the agent runs. For BYO agents, fetch spans from CloudWatch Logs (`aws/spans` log group) and pass them to the API. This enables using the same built-in and custom evaluators (e.g., `Builtin.Helpfulness`, `Builtin.ToolSelectionAccuracy`) for both managed and BYO agents. See [AgentCore Evaluations documentation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/how-it-works-evaluations.html).
 
 ### Side-by-Side: What Each Path Produces
+
+> ⚠️ **Note:** The diagram below shows the **old architecture** where BYO agents had a separate "Local SDK Evaluator" path. In the unified architecture (Section 8.1), both paths converge on the **AgentCore Evaluate API** — the local SDK evaluator path is deprecated.
 
 ```mermaid
 graph TB
     subgraph Managed["MANAGED PATH"]
         direction TB
-        M_Trace["CloudWatch Traces<br/>• Linked to runtime ARN<br/>• Discoverable by agentcore eval"]
-        M_Eval["AgentCore Evaluator<br/>• multiplier_domain_accuracy (1-5)<br/>• multiplier_deterministic (Lambda)<br/>• Online eval (auto, 100% sampling)<br/>• On-demand via CLI"]
+        M_Trace["CloudWatch Traces<br/>• Linked to runtime ARN<br/>• Auto-discovered by evaluators"]
+        M_Eval["AgentCore Evaluator<br/>• Built-in (Helpfulness, GoalSuccess, etc.)<br/>• Custom (LLM Judge, Lambda)<br/>• Online eval (auto, 100% sampling)<br/>• On-demand + Batch"]
         M_Trace --> M_Eval
     end
 
     subgraph BYO["BYO PATH"]
         direction TB
-        B_Trace["CloudWatch Traces<br/>• Linked to service.name<br/>• NOT discoverable by agentcore"]
-        B_Eval["Local SDK Evaluator<br/>• CorrectnessEvaluator (0/1)<br/>• HelpfulnessEvaluator (0-1)<br/>• FaithfulnessEvaluator (0-1)<br/>• CoherenceEvaluator (0-1)<br/>• ToolAccuracy (0-1)<br/>• Triggered by script"]
+        B_Trace["CloudWatch Traces<br/>• In aws/spans log group<br/>• Queryable by session ID"]
+        B_Eval["AgentCore Evaluator (on-demand/batch)<br/>• Same built-in evaluators<br/>• Same custom evaluators<br/>• Fetch spans → evaluate() API<br/>• No online eval (manual trigger)"]
+        B_SDK["Local SDK Evaluator (optional)<br/>• InMemoryExporter (instant)<br/>• strands-agents-evals"]
         B_Trace --> B_Eval
+        B_Trace --> B_SDK
     end
 
     M_Eval --> Registry["Agent Registry (unified)<br/>• Both paths update same registry<br/>• Cross-path comparison<br/>• Stale detection"]
     B_Eval --> Registry
+    B_SDK --> Registry
 
     style Managed fill:#E8F5E9,stroke:#82b366
     style BYO fill:#E3F2FD,stroke:#6c8ebf
@@ -781,16 +956,19 @@ graph TB
 
 ### Evaluation Timing: When Does Each Step Happen?
 
+> ⚠️ **Note:** This timing table reflects the **old dual-evaluation approach**. With the unified path (Section 8.1), both managed and BYO agents are evaluated via the AgentCore Evaluate API after a configurable trace propagation delay (default 120s).
+
 | Step | Managed | BYO |
 |------|---------|-----|
 | Agent invocation | T+0s | T+0s |
 | Trace available in CloudWatch | T+10min (indexing) | T+10min (indexing) |
 | Online eval score available | T+12min (auto) | ❌ Not supported |
 | On-demand eval (`agentcore run eval`) | T+10min+ (after indexing) | ❌ Not supported |
-| Local SDK eval score | T+0s (in-process) | T+0s (in-process) |
+| ~~Local SDK eval score~~ | ~~T+0s (in-process)~~ | ~~T+0s (in-process)~~ *(deprecated)* |
+| **Unified eval score** | **T+2min (after wait)** | **T+2min (after wait)** |
 | Registry updated | T+0s (script) | T+0s (script) |
 
-**Practical implication:** For rapid iteration during development, both paths use local SDK evaluation (instant). The managed path additionally provides continuous online evaluation for production monitoring.
+**Practical implication:** The unified comparison script handles the wait automatically. For rapid iteration during development, the `--skip-invocation` flag allows re-evaluating previously captured sessions without re-invoking agents.
 
 ---
 
@@ -877,10 +1055,20 @@ cd edd-poc
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Run the full 6-agent comparison
+# Run the unified 6-agent comparison (recommended)
 AWS_PROFILE=ml-sandbox AWS_REGION=us-east-1 \
-  .venv/bin/python scripts/run_registry_comparison.py
+  .venv/bin/python scripts/run_unified_comparison.py
+
+# With custom options
+.venv/bin/python scripts/run_unified_comparison.py \
+  --wait-seconds 180 \
+  --evaluators multiplier_domain_accuracy,Builtin.Helpfulness
+
+# Skip invocation (re-evaluate from previous run data)
+.venv/bin/python scripts/run_unified_comparison.py --skip-invocation
 ```
+
+> **Note:** The old `scripts/run_registry_comparison.py` is deprecated. Use `scripts/run_unified_comparison.py` which evaluates both managed and BYO agents through the same AgentCore Evaluate API.
 
 ### Individual Paths
 

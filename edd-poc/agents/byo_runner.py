@@ -48,6 +48,24 @@ def main():
     if "OTEL_RESOURCE_ATTRIBUTES" not in os.environ:
         os.environ["OTEL_RESOURCE_ATTRIBUTES"] = f"service.name=multiplier-byo-{model_key}"
 
+    # Set session ID via OTEL baggage for evaluation support
+    try:
+        from opentelemetry import baggage
+        from opentelemetry.context import attach
+        import uuid
+
+        session_id = os.environ.get("BYO_SESSION_ID", f"byo-{model_key}-{uuid.uuid4().hex[:8]}")
+        ctx = baggage.set_baggage("session.id", session_id)
+        attach(ctx)
+    except ImportError:
+        pass
+
+    # Initialize Strands OTEL tracer to emit spans AND log events with
+    # 'strands.telemetry.tracer' scope. This is critical for evaluation —
+    # without it, the invoke_agent span won't have a corresponding log event.
+    from strands.telemetry.tracer import get_tracer
+    get_tracer()
+
     # Import agent factory AFTER env vars are set
     from agent import create_agent  # noqa: E402
 

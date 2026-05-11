@@ -9,11 +9,10 @@
       "owner": "edd-poc",
       "description": "HR/Compliance agent - Sonnet 4.6 (managed runtime, baseline)",
       "last_eval_score": {
-        "correctness": 0.2,
-        "helpfulness": 0.667
+        "unified_comparison_avg": 3.8
       },
-      "last_eval_timestamp": "2026-05-08T07:38:27.079054+00:00",
-      "last_eval_evaluator": "registry_comparison",
+      "last_eval_timestamp": "2026-05-09T10:38:50.532751+00:00",
+      "last_eval_evaluator": "unified_comparison",
       "tags": [
         "managed",
         "sonnet",
@@ -29,11 +28,10 @@
       "owner": "edd-poc",
       "description": "HR/Compliance agent - Nova 2 Pro (managed runtime)",
       "last_eval_score": {
-        "correctness": 0.4,
-        "helpfulness": 0.8
+        "unified_comparison_avg": 4.0
       },
-      "last_eval_timestamp": "2026-05-08T07:38:27.079054+00:00",
-      "last_eval_evaluator": "registry_comparison",
+      "last_eval_timestamp": "2026-05-09T10:38:50.532751+00:00",
+      "last_eval_evaluator": "unified_comparison",
       "tags": [
         "managed",
         "nova_2_pro",
@@ -49,11 +47,10 @@
       "owner": "edd-poc",
       "description": "HR/Compliance agent - GLM 5 (managed runtime)",
       "last_eval_score": {
-        "correctness": 0.4,
-        "helpfulness": 0.766
+        "unified_comparison_avg": 3.8
       },
-      "last_eval_timestamp": "2026-05-08T07:38:27.079054+00:00",
-      "last_eval_evaluator": "registry_comparison",
+      "last_eval_timestamp": "2026-05-09T10:38:50.532751+00:00",
+      "last_eval_evaluator": "unified_comparison",
       "tags": [
         "managed",
         "glm_5",
@@ -69,11 +66,10 @@
       "owner": "edd-poc",
       "description": "HR/Compliance agent - Sonnet 4.6 (BYO via ADOT, baseline)",
       "last_eval_score": {
-        "correctness": 0.4,
-        "helpfulness": 0.8
+        "unified_comparison_avg": 0.0
       },
-      "last_eval_timestamp": "2026-05-08T07:38:27.079054+00:00",
-      "last_eval_evaluator": "registry_comparison",
+      "last_eval_timestamp": "2026-05-09T10:16:05.457528+00:00",
+      "last_eval_evaluator": "unified_comparison",
       "tags": [
         "byo",
         "sonnet",
@@ -89,11 +85,10 @@
       "owner": "edd-poc",
       "description": "HR/Compliance agent - Nova 2 Pro (BYO via ADOT)",
       "last_eval_score": {
-        "correctness": 0.4,
-        "helpfulness": 0.9
+        "unified_comparison_avg": 0.0
       },
-      "last_eval_timestamp": "2026-05-08T07:38:27.079054+00:00",
-      "last_eval_evaluator": "registry_comparison",
+      "last_eval_timestamp": "2026-05-09T10:16:05.457528+00:00",
+      "last_eval_evaluator": "unified_comparison",
       "tags": [
         "byo",
         "nova_2_pro",
@@ -109,11 +104,10 @@
       "owner": "edd-poc",
       "description": "HR/Compliance agent - GLM 5 (BYO via ADOT)",
       "last_eval_score": {
-        "correctness": 0.2,
-        "helpfulness": 0.866
+        "unified_comparison_avg": 0.0
       },
-      "last_eval_timestamp": "2026-05-08T07:38:27.079054+00:00",
-      "last_eval_evaluator": "registry_comparison",
+      "last_eval_timestamp": "2026-05-09T10:16:05.457528+00:00",
+      "last_eval_evaluator": "unified_comparison",
       "tags": [
         "byo",
         "glm_5",
