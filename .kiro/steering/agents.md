@@ -5,6 +5,14 @@
 - Always use **serverless** architecture for AWS deployments (Lambda, API Gateway, DynamoDB, S3, etc.)
 - Do not use EC2, ECS, or EKS unless explicitly requested
 
+## AWS Cost Allocation Tags
+
+- **Always** tag all AWS resources with the following cost allocation tags:
+  - `app` — the application name (e.g., `multiplier-hr-agent`)
+  - `project` — the project identifier (e.g., `eddpoc`)
+  - `env` — the environment (e.g., `dev`, `staging`, `prod`)
+- Apply tags in CloudFormation/CDK stacks, Lambda functions, AgentCore runtimes, and any other AWS resources
+
 ## AWS Lambda Functions
 
 - Do not include heavy ML Python libraries (e.g., PyTorch, TensorFlow, scikit-learn, pandas with large dependencies) in Lambda functions
